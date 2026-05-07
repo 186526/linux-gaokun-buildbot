@@ -18,7 +18,7 @@ on:
       extra_packages:
         description: Extra packages to install (space-separated)
         required: true
-        default: "task-chinese-s fonts-noto-cjk fonts-noto-color-emoji fcitx5-chinese-addons gnome-tweaks gnome-shell-extension-manager mpv v4l-utils vim nano ripgrep git htop rsync screen firefox"
+        default: "task-chinese-s fonts-noto-cjk fonts-noto-color-emoji fcitx5-chinese-addons gnome-tweaks gnome-shell-extension-manager mpv v4l-utils vim nano ripgrep git htop rsync screen firefox-esr"
       build_el2:
         description: Build and include optional -gaokun3-el2 kernel and EL2 EFI payloads
         required: true
