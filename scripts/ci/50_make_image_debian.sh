@@ -149,6 +149,10 @@ bluetooth
 hci_uart
 btqca
 fuse
+# Touchscreen
+spi_geni_qcom
+himax_hx83121a_spi
+hid_multitouch
 # Input
 i2c-hid-of
 MODEOF
