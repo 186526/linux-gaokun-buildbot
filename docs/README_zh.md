@@ -38,18 +38,18 @@
 
 ### 补丁来源
 
-- `0001` 到 `0013`, `0024` 到 `0026`：来自 [right-0903/linux-gaokun](https://github.com/right-0903/linux-gaokun)，涵盖基础 SC8280XP / gaokun3 使能、显示点亮、EC 挂起恢复、ADSP FastRPC 以及 DSI 稳定性相关改动
-- `0014`：来自 [whitelewi1-ctrl/matebook-e-go-linux](https://github.com/whitelewi1-ctrl/matebook-e-go-linux)，用于在蓝牙地址无效时避免设置 `USE_BDADDR_PROPERTY`
-- `0015`：本仓库内的本地改动，用于启用 DSC 以及 60 Hz / 120 Hz 切换
-- `0016`：来自 [chiyuki0325/EGoTouchRev-Linux](https://github.com/chiyuki0325/EGoTouchRev-Linux)，用于加入 Himax HX83121A SPI 触摸屏驱动
-- `0017`：来自 [TheUnknownThing/linux-gaokun](https://github.com/TheUnknownThing/linux-gaokun)，用于改进 Type-C 路径的 UCSI 处理和模块接线
-- `0018` 到 `0023`：来自 [jhovold/linux](https://github.com/jhovold/linux/commits/wip/sc8280xp-6.16), 为高通 SC8280XP 平台 添加 Venus 视频编解码驱动支持
+- `upstream/*`, `others/0017`：来自 [right-0903/linux-gaokun](https://github.com/right-0903/linux-gaokun)，涵盖基础 SC8280XP / gaokun3 使能、显示点亮、EC 挂起恢复、ADSP FastRPC 以及 DSI 稳定性相关改动
+- `others/0001`：来自 [whitelewi1-ctrl/matebook-e-go-linux](https://github.com/whitelewi1-ctrl/matebook-e-go-linux)，用于在蓝牙地址无效时避免设置 `USE_BDADDR_PROPERTY`
+- `others/0002`：本仓库内的本地改动，用于启用 DSC 以及 60 Hz / 120 Hz 切换
+- `others/0003`：来自 [chiyuki0325/EGoTouchRev-Linux](https://github.com/chiyuki0325/EGoTouchRev-Linux)，用于加入 Himax HX83121A SPI 触摸屏驱动
+- `others/0004`：来自 [TheUnknownThing/linux-gaokun](https://github.com/TheUnknownThing/linux-gaokun)，用于改进 Type-C 路径的 UCSI 处理和模块接线
+- `media/*`：来自 [jhovold/linux](https://github.com/jhovold/linux/commits/wip/sc8280xp-6.16), 为高通 SC8280XP 平台 添加 Venus 视频编解码驱动支持
 - `0099`：本仓库内的本地补丁，用于导入当前的 DTS 文件和 `gaokun3_defconfig`
-- EL2 `0001` 到 `0024`：来自 [TravMurav/linux](https://github.com/TravMurav/linux/tree/x13s-6.18-v1.1-cxsd)，用于补齐 EL2 启动路径中的 SMP2P 接管、remoteproc attach/restart 流程、SCM/SHM owner 处理，以及 rpmsg / QRTR / pmic_glink 相关稳定性修复
+- **[可选]** `el2/*`：来自 [TravMurav/linux](https://github.com/TravMurav/linux/tree/x13s-6.18-v1.1-cxsd)，用于补齐 EL2 启动路径中的 SMP2P 接管、remoteproc attach/restart 流程、SCM/SHM owner 处理，以及 rpmsg / QRTR / pmic_glink 相关稳定性修复
 
 ### Tools 来源
 
-- `tools/audio`、`tools/bluetooth` 和 `tools/touchpad`：来自 [whitelewi1-ctrl/matebook-e-go-linux](https://github.com/whitelewi1-ctrl/matebook-e-go-linux)
+- `tools/audio`、`tools/bluetooth`：来自 [whitelewi1-ctrl/matebook-e-go-linux](https://github.com/whitelewi1-ctrl/matebook-e-go-linux)
 - `tools/el2/qebspilaa64.efi`：来自 [stephan-gh/qebspil](https://github.com/stephan-gh/qebspil)
 - `tools/el2/slbounceaa64.efi`：来自 [TravMurav/slbounce](https://github.com/TravMurav/slbounce)
 - `tools/touchscreen-tuner`：来自 [chiyuki0325/EGoTouchRev-Linux](https://github.com/chiyuki0325/EGoTouchRev-Linux)，本仓库对其做了 GTK4 GUI 改进
@@ -70,6 +70,7 @@
 - Release：<https://github.com/KawaiiHachimi/linux-gaokun-build/releases>
 - 双系统引导指南：[English](dual_boot_guide_en.md) | [中文](dual_boot_guide_zh.md)
 - EL2 实现说明：[English](el2_kvm_guide_en.md) | [中文](el2_kvm_guide_zh.md)
+- Awesome Gaokun3：：[English](awesome_gaokun3_en.md) | [中文](awesome_gaokun3_zh.md)
 - 构建指南 – Fedora 44：[English](matebook_ego_build_guide_fedora44_en.md) | [中文](matebook_ego_build_guide_fedora44_zh.md)
 - 构建指南 – Ubuntu 26.04：[English](matebook_ego_build_guide_ubuntu26.04_en.md) | [中文](matebook_ego_build_guide_ubuntu26.04_zh.md)
 
