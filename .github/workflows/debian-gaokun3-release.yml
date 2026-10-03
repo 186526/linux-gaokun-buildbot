@@ -236,7 +236,7 @@ jobs:
             update-locale LANG=zh_CN.UTF-8 LANGUAGE=zh_CN:en_US:en LC_MESSAGES=zh_CN.UTF-8
 
             apt-get install -y \
-              linux-base initramfs-tools kmod
+              linux-base initramfs-tools kmod btrfs-progs
 
             apt-get install -y --no-install-recommends \
               systemd-boot
