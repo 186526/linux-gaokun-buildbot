@@ -80,6 +80,21 @@ apply_series() {
   done
 }
 
+apply_el2_series() {
+  local patch_file resolution
+  local patches=()
+
+  for patch_file in "$GAOKUN_DIR"/patches/el2/*.patch; do
+    resolution="$(patch_resolution_for el2 "$patch_file")"
+    if [[ "$resolution" != "$patch_file" ]]; then
+      echo "using base override: $resolution"
+    fi
+    patches+=("$resolution")
+  done
+
+  git -C "$KERN_SRC_EL2" apply "${patches[@]}"
+}
+
 mkdir -p "$WORKDIR"
 
 configure_git_identity "$KERN_SRC"
@@ -106,7 +121,7 @@ fi
 configure_git_identity "$KERN_SRC_EL2"
 rm -rf "$KERN_OUT_EL2"
 make -C "$KERN_SRC_EL2" O="$KERN_OUT_EL2" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" clean
-git -C "$KERN_SRC_EL2" apply "$GAOKUN_DIR"/patches/el2/*.patch
+apply_el2_series
 git -C "$KERN_SRC_EL2" add -A
 git -C "$KERN_SRC_EL2" commit -m "Apply EL2 patches"
 
