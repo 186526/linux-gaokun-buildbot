@@ -297,14 +297,13 @@ jobs:
           sudo mount -t sysfs sys "$ROOTFS_DIR/sys"
           sudo mount -t tmpfs tmpfs "$ROOTFS_DIR/run"
 
-          chroot_debs="/tmp/$image_deb_name /tmp/$modules_deb_name /tmp/$firmware_deb_name"
+          chroot_debs="/tmp/$firmware_deb_name /tmp/$image_deb_name /tmp/$modules_deb_name"
           if [[ "$BUILD_EL2" == "true" ]]; then
             chroot_debs="$chroot_debs /tmp/$el2_image_deb_name /tmp/$el2_modules_deb_name"
           fi
 
           sudo chroot "$ROOTFS_DIR" /bin/bash -euxo pipefail -c '
-            # Install firmware before kernel postinst hooks so the generated initramfs
-            # contains the Adreno and platform firmware required during early DRM setup.
+            # The firmware package must be installed before kernel postinst hooks.
             dpkg -i '"$chroot_debs"'
             update-initramfs -u -k '"$manifest_kernel_release"'
             '"$(if [[ "$BUILD_EL2" == "true" ]]; then printf 'update-initramfs -u -k %q\n' "$el2_kernel_release"; fi)"'
