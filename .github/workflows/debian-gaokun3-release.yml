@@ -11,6 +11,14 @@ on:
         description: Linux kernel tag
         required: true
         default: "v7.2-rc2"
+      kernel_base:
+        description: Kernel base (mainline or xanmod)
+        required: true
+        default: "mainline"
+        type: choice
+        options:
+          - mainline
+          - xanmod
       desktop_environment:
         description: Desktop environment metapackage
         required: true
@@ -39,6 +47,7 @@ jobs:
     uses: ./.github/workflows/gaokun3-package-debs.yml
     with:
       kernel_tag: ${{ github.event.inputs.kernel_tag }}
+      kernel_base: ${{ github.event.inputs.kernel_base }}
       build_el2: ${{ github.event.inputs.build_el2 == 'true' }}
     secrets: inherit
 
@@ -50,6 +59,7 @@ jobs:
       TZ: UTC
       DEBIAN_RELEASE: ${{ github.event.inputs.debian_release }}
       KERNEL_TAG: ${{ github.event.inputs.kernel_tag }}
+      KERNEL_BASE: ${{ github.event.inputs.kernel_base }}
       DESKTOP_ENVIRONMENT: ${{ github.event.inputs.desktop_environment }}
       EXTRA_PACKAGES: ${{ github.event.inputs.extra_packages }}
       BUILD_EL2: ${{ github.event.inputs.build_el2 }}
@@ -90,11 +100,15 @@ jobs:
           else
             safe_kernel_tag="${KERNEL_TAG//\//-}"
             safe_kernel_tag="${safe_kernel_tag//[^A-Za-z0-9._-]/-}"
+            base_suffix=""
+            if [[ "${KERNEL_BASE:-mainline}" == "xanmod" ]]; then
+              base_suffix="-xanmod"
+            fi
             profile="std"
             if [[ "$BUILD_EL2" == "true" ]]; then
               profile="std-el2"
             fi
-            prefix="gaokun3-debs-${safe_kernel_tag}-${profile}-"
+            prefix="gaokun3-debs-${safe_kernel_tag}${base_suffix}-${profile}-"
 
             releases_json="$WORKDIR/releases.json"
             curl -fsSL \

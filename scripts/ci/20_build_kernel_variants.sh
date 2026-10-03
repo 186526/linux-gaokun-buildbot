@@ -5,6 +5,10 @@ set -euo pipefail
 : "${WORKDIR:?missing WORKDIR}"
 : "${KERN_SRC:?missing KERN_SRC}"
 
+# shellcheck source=lib/select_base.sh
+. "$GAOKUN_DIR/scripts/ci/lib/select_base.sh"
+resolve_kernel_base
+
 KERN_OUT="${KERN_OUT:-$WORKDIR/kernel-out}"
 KERN_SRC_BASE="${KERN_SRC_BASE:-$WORKDIR/mainline-linux-base}"
 KERN_SRC_EL2="${KERN_SRC_EL2:-$KERN_SRC}"
@@ -59,13 +63,30 @@ snapshot_tree() {
   cp -a "$src_dir"/. "$dst_dir"/
 }
 
+apply_series() {
+  local series_name="$1"
+  shift
+  local patch_file resolution
+
+  for patch_file in "$@"; do
+    resolution="$(patch_resolution_for "$series_name" "$patch_file")"
+
+    if patch_is_already_applied "$KERN_SRC" "$resolution"; then
+      echo "skip already-applied patch: $resolution"
+      continue
+    fi
+
+    git -C "$KERN_SRC" am "$resolution"
+  done
+}
+
 mkdir -p "$WORKDIR"
 
 configure_git_identity "$KERN_SRC"
-git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/upstream/*.patch
-git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/others/*.patch
-git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/media/*.patch
-git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch
+apply_series upstream "$GAOKUN_DIR"/patches/upstream/*.patch
+apply_series others "$GAOKUN_DIR"/patches/others/*.patch
+apply_series media "$GAOKUN_DIR"/patches/media/*.patch
+apply_series . "$GAOKUN_DIR"/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch
 
 ccache -z || true
 build_variant "$KERN_SRC" "$KERN_OUT"

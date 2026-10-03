@@ -46,6 +46,7 @@ The package pipeline builds and installs dedicated package sets:
 - `media/*`: adapted from the [jhovold/linux](https://github.com/jhovold/linux/commits/wip/sc8280xp-6.16) to add SC8280XP Venus support
 - `0099`: local patch in this repository to import the current DTS files and `gaokun3_defconfig`
 - **[Optional]** `el2/*`: adapted from [TravMurav/linux](https://github.com/TravMurav/linux/tree/x13s-6.18-v1.1-cxsd) for the EL2 boot path, including SMP2P handover, remoteproc attach/restart flow, SCM/SHM owner handling, and related rpmsg/QRTR/pmic_glink stability fixes
+- **[Optional]** `xanmod/*`: base-local overrides for `upstream/0018` and `0099` when building against an [XanMod](https://gitlab.com/xanmod/linux) base (`kernel_base=xanmod`); patches already present in the base (e.g. `upstream/0017`) are skipped automatically
 
 ### Tool Sources
 

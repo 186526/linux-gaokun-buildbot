@@ -2,6 +2,7 @@
 set -euo pipefail
 
 KERNEL_TAG="${KERNEL_TAG:-v7.2-rc2}"
+KERNEL_BASE="${KERNEL_BASE:-mainline}"
 GAOKUN_DIR="${GAOKUN_DIR:-$HOME/gaokun/linux-gaokun-buildbot}"
 KERN_SRC="${KERN_SRC:-$HOME/gaokun/mainline-linux}"
 KERN_OUT="${KERN_OUT:-$HOME/gaokun/kernel-out}"
@@ -80,23 +81,44 @@ ensure_source_tree() {
         git clone https://github.com/KawaiiHachimi/linux-gaokun-buildbot "$GAOKUN_DIR"
     fi
 
-    read -r -p "Use Chinese mirror (mirrors.bfsu.edu.cn) for Linux kernel? [Y/n] [default: Y]: " mirror_choice
-    mirror_choice="${mirror_choice:-Y}"
-    if [[ "$mirror_choice" =~ ^([nN][oO]|[nN])$ ]]; then
-        KERNEL_URL="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git"
+    if [[ "$KERNEL_BASE" == "xanmod" ]]; then
+        KERNEL_URL="${KERNEL_URL:-https://gitlab.com/xanmod/linux.git}"
+        PATCH_DIR="$GAOKUN_DIR/patches/xanmod"
     else
-        KERNEL_URL="https://mirrors.bfsu.edu.cn/git/linux.git"
+        read -r -p "Use Chinese mirror (mirrors.bfsu.edu.cn) for Linux kernel? [Y/n] [default: Y]: " mirror_choice
+        mirror_choice="${mirror_choice:-Y}"
+        if [[ "$mirror_choice" =~ ^([nN][oO]|[nN])$ ]]; then
+            KERNEL_URL="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git"
+        else
+            KERNEL_URL="https://mirrors.bfsu.edu.cn/git/linux.git"
+        fi
+        PATCH_DIR="$GAOKUN_DIR/patches"
     fi
 
     rm -rf "$KERN_SRC"
     git clone --depth=1 "$KERNEL_URL" "$KERN_SRC" -b "$KERNEL_TAG"
     configure_git_identity
 
-    echo "Applying standard gaokun3 patches..."
-    git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/upstream/*.patch
-    git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/others/*.patch
-    git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/media/*.patch
-    git -C "$KERN_SRC" am "$GAOKUN_DIR"/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch
+    echo "Applying standard gaokun3 patches (base: $KERNEL_BASE)..."
+    for series in upstream others media; do
+        for patch_file in "$GAOKUN_DIR/patches/$series"/*.patch; do
+            resolution="$patch_file"
+            if [[ -f "$PATCH_DIR/$series/$(basename "$patch_file")" ]]; then
+                resolution="$PATCH_DIR/$series/$(basename "$patch_file")"
+            fi
+            if git -C "$KERN_SRC" apply --reverse --check "$resolution" >/dev/null 2>&1; then
+                echo "skip already-applied patch: $resolution"
+                continue
+            fi
+            git -C "$KERN_SRC" am "$resolution"
+        done
+    done
+
+    local import_patch="$GAOKUN_DIR/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch"
+    if [[ -f "$PATCH_DIR/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch" ]]; then
+        import_patch="$PATCH_DIR/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch"
+    fi
+    git -C "$KERN_SRC" am "$import_patch"
 }
 
 el2_state() {

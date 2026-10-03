@@ -46,6 +46,7 @@
 - `media/*`：来自 [jhovold/linux](https://github.com/jhovold/linux/commits/wip/sc8280xp-6.16), 为高通 SC8280XP 平台 添加 Venus 视频编解码驱动支持
 - `0099`：本仓库内的本地补丁，用于导入当前的 DTS 文件和 `gaokun3_defconfig`
 - **[可选]** `el2/*`：来自 [TravMurav/linux](https://github.com/TravMurav/linux/tree/x13s-6.18-v1.1-cxsd)，用于补齐 EL2 启动路径中的 SMP2P 接管、remoteproc attach/restart 流程、SCM/SHM owner 处理，以及 rpmsg / QRTR / pmic_glink 相关稳定性修复
+- **[可选]** `xanmod/*`：当以 [XanMod](https://gitlab.com/xanmod/linux) 内核作为基础（`kernel_base=xanmod`）时，覆盖 `upstream/0018` 与 `0099` 两个补丁，使其适配 XanMod 的上下文；已在 XanMod 中的补丁（如 `upstream/0017`）会被自动跳过
 
 ### Tools 来源
 
