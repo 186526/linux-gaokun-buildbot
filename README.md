@@ -26,9 +26,9 @@ The image pipeline now uses `systemd-boot` by default and can optionally build a
 The package pipeline builds and installs dedicated package sets:
 
 - **Fedora (RPM)**: `kernel-gaokun3`, `kernel-modules-gaokun3`, `kernel-devel-gaokun3`, `linux-firmware-gaokun3`
-- **Ubuntu (DEB)**: `linux-image-gaokun3`, `linux-modules-gaokun3`, `linux-headers-gaokun3`, `linux-firmware-gaokun3`
+- **Ubuntu (DEB)**: kernel image, module, and header packages include the exact kernel release in their package names, allowing multiple Gaokun3 kernels to be installed side by side; `linux-firmware-gaokun3` provides shared firmware.
 - **Optional EL2 variants**: `*-gaokun3-el2` package set for the second EL2 kernel build
-- Ubuntu kernel image packages run `update-initramfs` during install/upgrade, which in turn refreshes the BLS entry through the distro `systemd-boot` hook.
+- Debian/Ubuntu kernel image packages run `update-initramfs` during install/upgrade, which in turn refreshes the BLS entry through the distro `systemd-boot` hook. Versioned package names allow diagnostic and current kernels to remain installed together.
 - Fedora kernel RPMs now ship a matching `dracut.conf.d` snippet and run `dracut` + `kernel-install add` in `%posttrans`, so installing or upgrading the package refreshes the initramfs and BLS entry automatically.
 
 ### Releases

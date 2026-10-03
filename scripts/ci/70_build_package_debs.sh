@@ -99,9 +99,10 @@ build_kernel_variant() {
   local dtb_name="$6"
 
   local deb_version="${krel//-/\~}-1"
-  local image_pkg="linux-image-gaokun3${pkg_suffix}"
-  local modules_pkg="linux-modules-gaokun3${pkg_suffix}"
-  local headers_pkg="linux-headers-gaokun3${pkg_suffix}"
+  local package_suffix="-${krel}"
+  local image_pkg="linux-image-gaokun3${package_suffix}${pkg_suffix}"
+  local modules_pkg="linux-modules-gaokun3${package_suffix}${pkg_suffix}"
+  local headers_pkg="linux-headers-gaokun3${package_suffix}${pkg_suffix}"
   local image_stage="$BUILDROOT_DIR/${image_pkg}"
   local modules_stage="$BUILDROOT_DIR/${modules_pkg}"
   local modules_raw_stage="$BUILDROOT_DIR/${modules_pkg}-raw"

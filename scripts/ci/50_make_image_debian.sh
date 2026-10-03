@@ -141,8 +141,14 @@ uas
 typec
 # WiFi
 pci-pwrctrl-pwrseq
+michael_mic
 ath11k
 ath11k_pci
+# Bluetooth and filesystem support
+bluetooth
+hci_uart
+btqca
+fuse
 # Input
 i2c-hid-of
 MODEOF
@@ -162,6 +168,8 @@ copy_fw /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcadsp8280.mbn
 copy_fw /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qccdsp8280.mbn
 copy_fw /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcslpi8280.mbn
 copy_fw /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/audioreach-tplg.bin
+copy_fw /lib/firmware/qcom/a660_gmu.bin
+copy_fw /lib/firmware/qcom/a660_sqe.fw
 EOF
 chmod 0755 /etc/initramfs-tools/hooks/gaokun3-firmware
 
