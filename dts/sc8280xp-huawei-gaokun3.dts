@@ -40,7 +40,7 @@
                 ranges;
 
                 framebuffer0: framebuffer@c6200000 {
-                        compatible = "simple-framebuffer";
+                        status = "disabled";
                         reg = <0x0 0xc6200000 0x0 (2560 * 1600 * 4)>;
                         width = <1600>;
                         height = <2560>;
@@ -628,7 +628,7 @@
 
 	zap-shader {
 		memory-region = <&gpu_mem>;
-		firmware-name = "qcom/sc8280xp/HUAWEI/gaokun3/qcdxkmsuc8280.mbn";
+		status = "disabled";
 	};
 };
 
