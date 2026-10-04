@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: linux-gaokun-buildbot <186526@users.noreply.github.com>
+Date: Sun, 4 Oct 2026 20:30:00 +0800
+Subject: [PATCH] drm/msm: mark fbdev screen buffer as virtual
+
+msm_fbdev provides a kernel virtual mapping through screen_buffer, but does
+not set FBINFO_VIRTFB. The fbdev core consequently selects the I/O helpers
+and reports that the framebuffer is not in virtual address space when the
+console draws. Mark the mapping explicitly so the system-memory helpers are
+used.
+
+Signed-off-by: linux-gaokun-buildbot <186526@users.noreply.github.com>
+---
+ drivers/gpu/drm/msm/msm_fbdev.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/gpu/drm/msm/msm_fbdev.c b/drivers/gpu/drm/msm/msm_fbdev.c
+index 000000000000..111111111111 100644
+--- a/drivers/gpu/drm/msm/msm_fbdev.c
++++ b/drivers/gpu/drm/msm/msm_fbdev.c
+@@ -134,6 +134,7 @@ int msm_fbdev_driver_fbdev_probe(struct drm_fb_helper *helper,
+ 	fbi->fbops = &msm_fb_ops;
+ 
+ 	drm_fb_helper_fill_info(fbi, helper, sizes);
++	fbi->flags |= FBINFO_VIRTFB;
+ 
+ 	fbi->screen_buffer = msm_gem_get_vaddr(bo);
+ 	if (IS_ERR(fbi->screen_buffer)) {
+--
+2.47.3
