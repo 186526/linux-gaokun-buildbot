@@ -628,7 +628,7 @@
 
 	zap-shader {
 		memory-region = <&gpu_mem>;
-		status = "disabled";
+		firmware-name = "qcom/sc8280xp/HUAWEI/gaokun3/qcdxkmsuc8280.mbn";
 	};
 };
 

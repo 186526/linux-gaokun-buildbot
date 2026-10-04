@@ -78,4 +78,10 @@ install_el2_efi_payloads() {
     "$rootfs_dir/boot/efi/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qccdsp8280.mbn"
   sudo install -Dm644 "$rootfs_dir/lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcslpi8280.mbn" \
     "$rootfs_dir/boot/efi/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcslpi8280.mbn"
+  sudo install -Dm644 "$rootfs_dir/lib/firmware/qcom/a660_gmu.bin" \
+    "$rootfs_dir/boot/efi/firmware/qcom/a660_gmu.bin"
+  sudo install -Dm644 "$rootfs_dir/lib/firmware/qcom/a660_sqe.fw" \
+    "$rootfs_dir/boot/efi/firmware/qcom/a660_sqe.fw"
+  sudo install -Dm644 "$rootfs_dir/lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcdxkmsuc8280.mbn" \
+    "$rootfs_dir/boot/efi/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcdxkmsuc8280.mbn"
 }

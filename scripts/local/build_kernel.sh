@@ -151,6 +151,9 @@ copy_fw /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcadsp8280.mbn
 copy_fw /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qccdsp8280.mbn
 copy_fw /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcslpi8280.mbn
 copy_fw /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/audioreach-tplg.bin
+copy_fw /lib/firmware/qcom/a660_gmu.bin
+copy_fw /lib/firmware/qcom/a660_sqe.fw
+copy_fw /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcdxkmsuc8280.mbn
 EOF
     sudo chmod 0755 /etc/initramfs-tools/hooks/gaokun3-firmware
 }
