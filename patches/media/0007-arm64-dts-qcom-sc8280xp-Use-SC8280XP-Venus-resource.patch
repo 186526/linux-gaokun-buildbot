@@ -1,0 +1,32 @@
+From 140007b968bdda031dcb2831a96d13bf219cf811 Mon Sep 17 00:00:00 2001
+From: ci <ci@local>
+Date: Tue, 6 Oct 2026 04:23:44 +0800
+Subject: [PATCH] arm64: dts: qcom: sc8280xp: Use SC8280XP Venus resource
+
+The Venus node advertises "qcom,sm8350-venus", which binds to the SM8350
+resource struct. The SC8280XP resource struct added by the preceding
+patches only matches "qcom,sc8280xp-venus", so the SC8280XP clock and
+power-domain configuration is never selected.
+
+Point the node at "qcom,sc8280xp-venus" so the SC8280XP resource struct
+is used.
+---
+ arch/arm64/boot/dts/qcom/sc8280xp.dtsi | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sc8280xp.dtsi b/arch/arm64/boot/dts/qcom/sc8280xp.dtsi
+index 0fbaf1432d..9b30f88531 100644
+--- a/arch/arm64/boot/dts/qcom/sc8280xp.dtsi
++++ b/arch/arm64/boot/dts/qcom/sc8280xp.dtsi
+@@ -4216,7 +4216,7 @@ usb_1_dwc3_ss: endpoint {
+ 		};
+ 
+ 		venus: video-codec@aa00000 {
+-			compatible = "qcom,sm8350-venus";
++			compatible = "qcom,sc8280xp-venus";
+ 			reg = <0 0x0aa00000 0 0x100000>;
+ 			interrupts = <GIC_SPI 174 IRQ_TYPE_LEVEL_HIGH>;
+ 
+-- 
+2.55.0
+
