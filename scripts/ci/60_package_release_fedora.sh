@@ -37,7 +37,7 @@ EOF
 fi
 
 cp "$IMAGE_FILE" "$ARTIFACT_DIR/"
-zstd -T0 -19 "$ARTIFACT_DIR/$IMAGE_BASENAME" -o "$ZST_FILE"
+zstd -T0 -19 --progress "$ARTIFACT_DIR/$IMAGE_BASENAME" -o "$ZST_FILE"
 
 if [ "$(stat -c '%s' "$ZST_FILE")" -lt "$SPLIT_THRESHOLD_BYTES" ]; then
   PACKAGE_GLOB="${IMAGE_BASENAME}.zst"
