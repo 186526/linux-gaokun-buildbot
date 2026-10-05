@@ -47,3 +47,31 @@ patch_resolution_for() {
     printf '%s\n' "$patch_file"
   fi
 }
+
+# List the patch files to apply for one series, in apply order: every shared
+# patch in shared_dir, with a same-name base override substituted in place,
+# followed by base-local patches that have no shared counterpart of the same
+# file name. Such patches exist only for the xanmod base.
+patch_series_files() {
+  local series_name="$1"
+  local shared_dir="$2"
+  local patch_file override_dir override
+
+  for patch_file in "$shared_dir"/*.patch; do
+    [[ -e "$patch_file" ]] || continue
+    patch_resolution_for "$series_name" "$patch_file"
+  done
+
+  if [[ "${KERNEL_BASE:-}" != "xanmod" ]]; then
+    return 0
+  fi
+
+  override_dir="$KERNEL_PATCH_DIR/$series_name"
+  for override in "$override_dir"/*.patch; do
+    [[ -e "$override" ]] || continue
+    if [[ -f "$shared_dir/$(basename "$override")" ]]; then
+      continue
+    fi
+    printf '%s\n' "$override"
+  done
+}

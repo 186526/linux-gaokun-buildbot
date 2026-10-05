@@ -63,34 +63,37 @@ snapshot_tree() {
   cp -a "$src_dir"/. "$dst_dir"/
 }
 
+apply_patch() {
+  local resolution="$1"
+
+  if patch_is_already_applied "$KERN_SRC" "$resolution"; then
+    echo "skip already-applied patch: $resolution"
+    return 0
+  fi
+
+  git -C "$KERN_SRC" am "$resolution"
+}
+
 apply_series() {
   local series_name="$1"
-  shift
-  local patch_file resolution
+  local shared_dir="$2"
+  local patch_file
 
-  for patch_file in "$@"; do
-    resolution="$(patch_resolution_for "$series_name" "$patch_file")"
-
-    if patch_is_already_applied "$KERN_SRC" "$resolution"; then
-      echo "skip already-applied patch: $resolution"
-      continue
-    fi
-
-    git -C "$KERN_SRC" am "$resolution"
-  done
+  while IFS= read -r patch_file; do
+    apply_patch "$patch_file"
+  done < <(patch_series_files "$series_name" "$shared_dir")
 }
 
 apply_el2_series() {
-  local patch_file resolution
+  local patch_file
   local patches=()
 
-  for patch_file in "$GAOKUN_DIR"/patches/el2/*.patch; do
-    resolution="$(patch_resolution_for el2 "$patch_file")"
-    if [[ "$resolution" != "$patch_file" ]]; then
-      echo "using base override: $resolution"
+  while IFS= read -r patch_file; do
+    if [[ "$patch_file" != "$GAOKUN_DIR/patches/el2/$(basename "$patch_file")" ]]; then
+      echo "using base override: $patch_file"
     fi
-    patches+=("$resolution")
-  done
+    patches+=("$patch_file")
+  done < <(patch_series_files el2 "$GAOKUN_DIR/patches/el2")
 
   git -C "$KERN_SRC_EL2" apply "${patches[@]}"
 }
@@ -98,10 +101,10 @@ apply_el2_series() {
 mkdir -p "$WORKDIR"
 
 configure_git_identity "$KERN_SRC"
-apply_series upstream "$GAOKUN_DIR"/patches/upstream/*.patch
-apply_series others "$GAOKUN_DIR"/patches/others/*.patch
-apply_series media "$GAOKUN_DIR"/patches/media/*.patch
-apply_series . "$GAOKUN_DIR"/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch
+apply_series upstream "$GAOKUN_DIR"/patches/upstream
+apply_series others "$GAOKUN_DIR"/patches/others
+apply_series media "$GAOKUN_DIR"/patches/media
+apply_patch "$(patch_resolution_for . "$GAOKUN_DIR/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch")"
 
 ccache -z || true
 build_variant "$KERN_SRC" "$KERN_OUT"
