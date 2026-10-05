@@ -1,1 +1,21 @@
 depmod -a @KREL@ 2>/dev/null || true
+
+if command -v update-initramfs >/dev/null 2>&1; then
+  modules_file=/etc/initramfs-tools/modules
+  mkdir -p "$(dirname "$modules_file")"
+  touch "$modules_file"
+  for module in \
+    msm \
+    dwc3_qcom \
+    dwc3 \
+    xhci_plat_hcd \
+    usbnet \
+    r8152 \
+    cdc_ether \
+    typec \
+    ath11k_pci \
+    himax_hx83121a_spi; do
+    grep -qxF "$module" "$modules_file" || printf '%s\n' "$module" >> "$modules_file"
+  done
+  update-initramfs -u -k @KREL@ 2>/dev/null || true
+fi

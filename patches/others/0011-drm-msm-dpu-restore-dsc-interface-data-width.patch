@@ -1,0 +1,37 @@
+From 084124849b5523ff0bffb96fc073a104c1935ff8 Mon Sep 17 00:00:00 2001
+From: Gaokun3 Kernel Maintainer <kernel@gaokun3.local>
+Date: Mon, 5 Oct 2026 05:48:49 +0800
+Subject: [PATCH] drm/msm/dpu: restore DSC interface data width
+
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
+index 7a8d1136f6..9454eaab62 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
+@@ -12,6 +12,7 @@
+ #include "disp/msm_disp_snapshot.h"
+ #include "msm_dsc_helper.h"
+ 
++#include <drm/display/drm_dsc_helper.h>
+ #include <drm/drm_managed.h>
+ 
+ #define DPU_DEBUG_VIDENC(e, fmt, ...) DPU_DEBUG("enc%d intf%d " fmt, \
+@@ -129,10 +130,10 @@ static void drm_mode_to_intf_timing_params(
+ 	if (phys_enc->hw_intf->cap->type != INTF_DP && timing->compression_en) {
+ 		struct drm_dsc_config *dsc =
+ 		       dpu_encoder_get_dsc_config(phys_enc->parent);
+-		timing->dce_bytes_per_line = msm_dsc_get_bytes_per_line(dsc);
+-		timing->width = DIV_ROUND_UP(timing->dce_bytes_per_line * 8,
++		timing->width = DIV_ROUND_UP(timing->width * drm_dsc_get_bpp_int(dsc),
+ 					     dsc->bits_per_component * 3);
+ 		timing->xres = timing->width;
++		timing->dce_bytes_per_line = msm_dsc_get_bytes_per_line(dsc);
+ 	}
+ }
+ 
+-- 
+2.55.0
+

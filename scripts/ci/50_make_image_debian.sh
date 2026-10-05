@@ -175,6 +175,8 @@ copy_fw /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/audioreach-tplg.bin
 copy_fw /lib/firmware/qcom/a660_gmu.bin
 copy_fw /lib/firmware/qcom/a660_sqe.fw
 copy_fw /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcdxkmsuc8280.mbn
+copy_fw /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcvss8280.mbn
+copy_fw /lib/firmware/rtl_nic/rtl8153b-2.fw
 EOF
 chmod 0755 /etc/initramfs-tools/hooks/gaokun3-firmware
 
@@ -184,7 +186,7 @@ layout=bls
 EOF
 
 cat > /etc/kernel/cmdline <<EOF
-root=UUID=$ROOT_UUID rootflags=subvol=@ clk_ignore_unused pd_ignore_unused arm64.nopauth iommu.passthrough=0 iommu.strict=0 pcie_aspm.policy=powersupersave modprobe.blacklist=simpledrm efi=noruntime fbcon=rotate:1 usbhid.quirks=0x12d1:0x10b8:0x20000000 consoleblank=0 loglevel=4 psi=1
+root=UUID=$ROOT_UUID rootflags=subvol=@ clk_ignore_unused pd_ignore_unused arm64.nopauth iommu.passthrough=0 iommu.strict=0 pcie_aspm.policy=powersupersave modprobe.blacklist=simpledrm efi=noruntime usbhid.quirks=0x12d1:0x10b8:0x20000000 consoleblank=0 loglevel=4 psi=1
 EOF
 
 cat > /etc/kernel/devicetree <<'EOF'
