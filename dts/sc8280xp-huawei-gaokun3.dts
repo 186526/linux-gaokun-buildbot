@@ -819,6 +819,9 @@
 
 		reset-gpios = <&tlmm 38 GPIO_ACTIVE_LOW>;
 
+		/* panel is mounted rotated; report so compositors auto-rotate */
+		rotation = <90>;
+
 		vddi-supply = <&vreg_l2b>;
 		avdd-supply = <&vreg_avdd_5p5>;
 		avee-supply = <&vreg_avee_5p5>;

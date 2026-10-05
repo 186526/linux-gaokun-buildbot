@@ -1,0 +1,62 @@
+From 8cd17c5eaee93149ab6caec1fc550f9c5ca6e018 Mon Sep 17 00:00:00 2001
+From: Gaokun3 Kernel Maintainer <kernel@gaokun3.local>
+Date: Mon, 5 Oct 2026 23:02:08 +0800
+Subject: [PATCH] drm/panel: himax-hx83121a: report panel orientation from
+ device tree
+
+The panel is mounted rotated on the Gaokun3, so userspace (mutter, plymouth)
+has no orientation information and renders the primary plane sideways.
+
+Parse the device tree 'rotation' property and expose it through the panel's
+get_orientation callback so the connector carries a panel orientation and
+compositors can auto-rotate on boot.
+---
+ drivers/gpu/drm/panel/panel-himax-hx83121a.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/drivers/gpu/drm/panel/panel-himax-hx83121a.c b/drivers/gpu/drm/panel/panel-himax-hx83121a.c
+index 8b11fce4c7..b557e27bce 100644
+--- a/drivers/gpu/drm/panel/panel-himax-hx83121a.c
++++ b/drivers/gpu/drm/panel/panel-himax-hx83121a.c
+@@ -34,6 +34,7 @@ struct himax {
+ 	struct gpio_desc *reset_gpio;
+ 	struct regulator_bulk_data *supplies;
+ 	struct backlight_device *backlight;
++	enum drm_panel_orientation orientation;
+ };
+ 
+ struct panel_desc {
+@@ -184,10 +185,19 @@ static int himax_get_modes(struct drm_panel *panel,
+ 	return num_modes;
+ }
+ 
++static enum drm_panel_orientation
++himax_get_orientation(struct drm_panel *panel)
++{
++	struct himax *ctx = to_himax(panel);
++
++	return ctx->orientation;
++}
++
+ static const struct drm_panel_funcs himax_panel_funcs = {
+ 	.prepare = himax_prepare,
+ 	.unprepare = himax_unprepare,
+ 	.get_modes = himax_get_modes,
++	.get_orientation = himax_get_orientation,
+ };
+ 
+ static int himax_bl_update_status(struct backlight_device *bl)
+@@ -644,6 +654,10 @@ static int himax_probe(struct mipi_dsi_device *dsi)
+ 
+ 	ctx->panel.prepare_prev_first = true;
+ 
++	ret = of_drm_get_panel_orientation(dev->of_node, &ctx->orientation);
++	if (ret < 0)
++		return dev_err_probe(dev, ret, "Failed to get panel orientation\n");
++
+ 	if (desc->has_dcs_backlight) {
+ 		ctx->backlight = himax_create_backlight(to_primary_dsi(ctx));
+ 		if (IS_ERR(ctx->backlight))
+-- 
+2.55.0
+

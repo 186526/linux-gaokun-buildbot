@@ -730,7 +730,7 @@ index cd575e20d..b41f21366 100644
  	remote-endpoint = <&usb_0_qmpphy_dp_in>;
  };
  
-@@ -734,10 +796,92 @@ &mdss0_dp1 {
+@@ -734,10 +796,95 @@ &mdss0_dp1 {
  };
  
  &mdss0_dp1_out {
@@ -757,6 +757,9 @@ index cd575e20d..b41f21366 100644
 +		pinctrl-names = "default";
 +
 +		reset-gpios = <&tlmm 38 GPIO_ACTIVE_LOW>;
++
++		/* panel is mounted rotated; report so compositors auto-rotate */
++		rotation = <90>;
 +
 +		vddi-supply = <&vreg_l2b>;
 +		avdd-supply = <&vreg_avdd_5p5>;
