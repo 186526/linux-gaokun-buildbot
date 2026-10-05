@@ -6,10 +6,6 @@
             <y>0</y>
             <scale>1.6666666269302368</scale>
             <primary>yes</primary>
-            <transform>
-                <rotation>right</rotation>
-                <flipped>no</flipped>
-            </transform>
             <monitor>
                 <monitorspec>
                     <connector>DSI-1</connector>

@@ -1,0 +1,230 @@
+From 4dbcb1e4c135248c481c1b9c91987ddec9915856 Mon Sep 17 00:00:00 2001
+From: Replay <replay@example.invalid>
+Date: Mon, 5 Oct 2026 05:56:42 +0800
+Subject: [PATCH] arm64: dts: qcom: fix Gaokun3 ADSP heap and device support
+
+---
+ arch/arm64/boot/dts/qcom/sc8280xp.dtsi       | 83 +++++++++++++++++++-
+ drivers/media/i2c/hi846.c                    | 26 +++---
+ drivers/platform/arm64/huawei-gaokun-ec.c    |  1 +
+ drivers/power/supply/huawei-gaokun-battery.c |  2 +-
+ 4 files changed, 94 insertions(+), 18 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sc8280xp.dtsi b/arch/arm64/boot/dts/qcom/sc8280xp.dtsi
+index e4ae0ed330..3e4a25b042 100644
+--- a/arch/arm64/boot/dts/qcom/sc8280xp.dtsi
++++ b/arch/arm64/boot/dts/qcom/sc8280xp.dtsi
+@@ -11,6 +11,7 @@
+ #include <dt-bindings/clock/qcom,rpmh.h>
+ #include <dt-bindings/clock/qcom,sc8280xp-camcc.h>
+ #include <dt-bindings/clock/qcom,sc8280xp-lpasscc.h>
++#include <dt-bindings/clock/qcom,sm8350-videocc.h>
+ #include <dt-bindings/dma/qcom-gpi.h>
+ #include <dt-bindings/firmware/qcom,scm.h>
+ #include <dt-bindings/interconnect/qcom,osm-l3.h>
+@@ -689,7 +690,7 @@ reserved-region@83b00000 {
+ 		};
+ 
+ 		adsp_rpc_remote_heap_mem: adsp-rpc-remote-heap@84a00000 {
+-			reg = <0x0 0x84a00000 0x0 0x800000>;
++			reg = <0 0x84a00000 0 0x800000>;
+ 			no-map;
+ 		};
+ 
+@@ -698,6 +699,11 @@ reserved-region@85b00000 {
+ 			no-map;
+ 		};
+ 
++		pil_video_mem: pil_video_region@86700000 {
++			reg = <0 0x86700000 0 0x500000>;
++			no-map;
++		};
++
+ 		pil_adsp_mem: adsp-region@86c00000 {
+ 			reg = <0 0x86c00000 0 0x2000000>;
+ 			no-map;
+@@ -4218,6 +4224,81 @@ usb_1_dwc3_ss: endpoint {
+ 			};
+ 		};
+ 
++		venus: video-codec@aa00000 {
++			compatible = "qcom,sm8350-venus";
++			reg = <0 0x0aa00000 0 0x100000>;
++			interrupts = <GIC_SPI 174 IRQ_TYPE_LEVEL_HIGH>;
++
++			clocks = <&gcc GCC_VIDEO_AXI0_CLK>,
++				 <&videocc VIDEO_CC_MVS0C_CLK>,
++				 <&videocc VIDEO_CC_MVS0_CLK>;
++			clock-names = "iface", "core", "vcodec0_core";
++
++			power-domains = <&videocc MVS0C_GDSC>,
++					<&videocc MVS0_GDSC>,
++					<&rpmhpd SC8280XP_MX>;
++			power-domain-names = "venus", "vcodec0", "mx";
++
++			resets = <&gcc GCC_VIDEO_AXI0_CLK_ARES>;
++			reset-names = "core";
++
++			interconnects = <&gem_noc MASTER_APPSS_PROC 0 &config_noc SLAVE_VENUS_CFG 0>,
++					<&mmss_noc MASTER_VIDEO_P0 0 &mc_virt SLAVE_EBI1 0>,
++					<&mmss_noc MASTER_VIDEO_P0 0 &gem_noc SLAVE_LLCC 0>;
++			interconnect-names = "cpu-cfg", "video-mem", "video-llcc";
++
++			operating-points-v2 = <&venus_opp_table>;
++			iommus = <&apps_smmu 0x2e00 0x400>;
++			memory-region = <&pil_video_mem>;
++
++			status = "disabled";
++
++			video-decoder {
++				compatible = "venus-decoder";
++			};
++
++			video-encoder {
++				compatible = "venus-encoder";
++			};
++
++			venus_opp_table: opp-table {
++				compatible = "operating-points-v2";
++
++				opp-720000000 {
++					opp-hz = /bits/ 64 <720000000>;
++					required-opps = <&rpmhpd_opp_low_svs>;
++				};
++
++				opp-1014000000 {
++					opp-hz = /bits/ 64 <1014000000>;
++					required-opps = <&rpmhpd_opp_svs>;
++				};
++
++				opp-1098000000 {
++					opp-hz = /bits/ 64 <1098000000>;
++					required-opps = <&rpmhpd_opp_svs_l1>;
++				};
++
++				opp-1332000000 {
++					opp-hz = /bits/ 64 <1332000000>;
++					required-opps = <&rpmhpd_opp_nom>;
++				};
++			};
++		};
++
++		videocc: clock-controller@abf0000 {
++			compatible = "qcom,sc8280xp-videocc";
++			reg = <0 0x0abf0000 0 0x10000>;
++			clocks = <&rpmhcc RPMH_CXO_CLK>,
++				 <&rpmhcc RPMH_CXO_CLK_A>,
++				 <&sleep_clk>;
++			power-domains = <&rpmhpd SC8280XP_MMCX>;
++			required-opps = <&rpmhpd_opp_low_svs>;
++			#clock-cells = <1>;
++			#reset-cells = <1>;
++			#power-domain-cells = <1>;
++		};
++
+ 		cci0: cci@ac4a000 {
+ 			compatible = "qcom,sc8280xp-cci", "qcom,msm8996-cci";
+ 			reg = <0 0x0ac4a000 0 0x1000>;
+diff --git a/drivers/media/i2c/hi846.c b/drivers/media/i2c/hi846.c
+index 09b8dd60ef..74c27c3452 100644
+--- a/drivers/media/i2c/hi846.c
++++ b/drivers/media/i2c/hi846.c
+@@ -1310,9 +1310,9 @@ struct hi846 {
+ 	struct v4l2_ctrl *exposure;
+ 
+ 	struct mutex mutex; /* protect cur_mode, streaming and chip access */
+-	const struct hi846_mode *cur_mode;
+ 	const struct hi846_mode *supported_modes;
+ 	int num_modes;
++	const struct hi846_mode *cur_mode;
+ 	bool streaming;
+ };
+ 
+@@ -1971,10 +1971,8 @@ static int hi846_enum_frame_size(struct v4l2_subdev *sd,
+ 				 struct v4l2_subdev_state *sd_state,
+ 				 struct v4l2_subdev_frame_size_enum *fse)
+ {
+-	struct i2c_client *client = v4l2_get_subdevdata(sd);
+ 	struct hi846 *hi846 = to_hi846(sd);
+-	const struct hi846_mode *supported_modes = hi846->supported_modes;
+-
++	struct i2c_client *client = v4l2_get_subdevdata(sd);
+ 
+ 	if (fse->pad || fse->index >= hi846->num_modes)
+ 		return -EINVAL;
+@@ -1984,10 +1982,10 @@ static int hi846_enum_frame_size(struct v4l2_subdev *sd,
+ 		return -EINVAL;
+ 	}
+ 
+-	fse->min_width = supported_modes[fse->index].width;
+-	fse->max_width = supported_modes[fse->index].width;
+-	fse->min_height = supported_modes[fse->index].height;
+-	fse->max_height = supported_modes[fse->index].height;
++	fse->min_width = hi846->supported_modes[fse->index].width;
++	fse->max_width = hi846->supported_modes[fse->index].width;
++	fse->min_height = hi846->supported_modes[fse->index].height;
++	fse->max_height = hi846->supported_modes[fse->index].height;
+ 
+ 	dev_dbg(&client->dev, "%s: max width: %d max height: %d\n", __func__,
+ 		fse->max_width, fse->max_height);
+@@ -2109,7 +2107,8 @@ static s64 hi846_check_link_freqs(struct hi846 *hi846,
+ 	int i, j;
+ 
+ 	for (i = 0; i < freqs_count; i++) {
+-		link_freq = hi846_get_link_freq(hi846, &hi846->supported_modes[i]);
++		link_freq = hi846_get_link_freq(hi846,
++						      &hi846->supported_modes[i]);
+ 		for (j = 0; j < ep->nr_of_link_frequencies; j++)
+ 			if (link_freq == ep->link_frequencies[j])
+ 				break;
+@@ -2152,13 +2151,8 @@ static int hi846_parse_dt(struct hi846 *hi846, struct device *dev)
+ 	}
+ 
+ 	hi846->nr_lanes = bus_cfg.bus.mipi_csi2.num_data_lanes;
+-
+-	hi846->supported_modes = supported_modes;
+-	hi846->num_modes = ARRAY_SIZE(supported_modes) - 2;
+-	if (hi846->nr_lanes == 4) {
+-		hi846->supported_modes = supported_modes + 1;
+-		hi846->num_modes = ARRAY_SIZE(supported_modes) - 1;
+-	}
++	hi846->supported_modes = supported_modes + (hi846->nr_lanes == 4);
++	hi846->num_modes = ARRAY_SIZE(supported_modes) - (hi846->nr_lanes == 4 ? 1 : 2);
+ 
+ 	if (!bus_cfg.nr_of_link_frequencies) {
+ 		dev_err(dev, "link-frequency property not found in DT\n");
+diff --git a/drivers/platform/arm64/huawei-gaokun-ec.c b/drivers/platform/arm64/huawei-gaokun-ec.c
+index b51dbd36e2..e9c4e72473 100644
+--- a/drivers/platform/arm64/huawei-gaokun-ec.c
++++ b/drivers/platform/arm64/huawei-gaokun-ec.c
+@@ -780,6 +780,7 @@ static int gaokun_ec_probe(struct i2c_client *client)
+ 
+ 	ec->client = client;
+ 	i2c_set_clientdata(client, ec);
++	device_init_wakeup(dev, true);
+ 	BLOCKING_INIT_NOTIFIER_HEAD(&ec->notifier_list);
+ 
+ 	ec->enable_gpio = devm_gpiod_get_optional(dev, "enable",
+diff --git a/drivers/power/supply/huawei-gaokun-battery.c b/drivers/power/supply/huawei-gaokun-battery.c
+index c8bef3a1d7..6212b0068d 100644
+--- a/drivers/power/supply/huawei-gaokun-battery.c
++++ b/drivers/power/supply/huawei-gaokun-battery.c
+@@ -613,6 +613,7 @@ static int gaokun_psy_probe(struct auxiliary_device *adev,
+ 	auxiliary_set_drvdata(adev, ecbat);
+ 
+ 	psy_cfg.drv_data = ecbat;
++	psy_cfg.no_wakeup_source = true;
+ 	ecbat->adp_psy = devm_power_supply_register(dev, &gaokun_psy_adp_desc,
+ 						    &psy_cfg);
+ 	if (IS_ERR(ecbat->adp_psy))
+@@ -621,7 +622,6 @@ static int gaokun_psy_probe(struct auxiliary_device *adev,
+ 
+ 	psy_cfg.supplied_to = (char **)&gaokun_psy_bat_desc.name;
+ 	psy_cfg.num_supplicants = 1;
+-	psy_cfg.no_wakeup_source = true;
+ 	psy_cfg.attr_grp = gaokun_psy_features_groups;
+ 	ecbat->bat_psy = devm_power_supply_register(dev, &gaokun_psy_bat_desc,
+ 						    &psy_cfg);
+-- 
+2.55.0
+

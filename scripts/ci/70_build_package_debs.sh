@@ -40,7 +40,11 @@ render_template_to_string() {
     shift 2
   done
 
-  sed "${sed_args[@]}" "$template_path"
+  if [[ ${#sed_args[@]} -eq 0 ]]; then
+    cat "$template_path"
+  else
+    sed "${sed_args[@]}" "$template_path"
+  fi
 }
 
 build_deb() {
