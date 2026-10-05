@@ -63,6 +63,27 @@ configure_git_identity() {
     fi
 }
 
+apply_patch() {
+    local resolution="$1"
+    if patch_is_already_applied "$KERN_SRC" "$resolution"; then
+        echo "skip already-applied patch: $resolution"
+        return 0
+    fi
+    git -C "$KERN_SRC" am "$resolution"
+}
+
+# Apply one series using the shared patch-resolution helpers, so base-local
+# overrides and XanMod-only patches follow the same rules as the CI pipeline.
+apply_series() {
+    local series_name="$1"
+    local shared_dir="$2"
+    local patch_file
+
+    while IFS= read -r patch_file; do
+        apply_patch "$patch_file"
+    done < <(patch_series_files "$series_name" "$shared_dir")
+}
+
 ensure_source_tree() {
     if [[ -f "$KERN_SRC/arch/arm64/configs/gaokun3_defconfig" ]]; then
         return 0
@@ -81,9 +102,14 @@ ensure_source_tree() {
         git clone https://github.com/KawaiiHachimi/linux-gaokun-buildbot "$GAOKUN_DIR"
     fi
 
+    # Shared base resolution and patch selection (KERNEL_PATCH_DIR, overrides,
+    # XanMod-only patches). Sourced after the repository is guaranteed present.
+    # shellcheck source=../ci/lib/select_base.sh
+    . "$GAOKUN_DIR/scripts/ci/lib/select_base.sh"
+    resolve_kernel_base
+
     if [[ "$KERNEL_BASE" == "xanmod" ]]; then
         KERNEL_URL="${KERNEL_URL:-https://gitlab.com/xanmod/linux.git}"
-        PATCH_DIR="$GAOKUN_DIR/patches/xanmod"
     else
         read -r -p "Use Chinese mirror (mirrors.bfsu.edu.cn) for Linux kernel? [Y/n] [default: Y]: " mirror_choice
         mirror_choice="${mirror_choice:-Y}"
@@ -92,7 +118,6 @@ ensure_source_tree() {
         else
             KERNEL_URL="https://mirrors.bfsu.edu.cn/git/linux.git"
         fi
-        PATCH_DIR="$GAOKUN_DIR/patches"
     fi
 
     rm -rf "$KERN_SRC"
@@ -101,24 +126,10 @@ ensure_source_tree() {
 
     echo "Applying standard gaokun3 patches (base: $KERNEL_BASE)..."
     for series in upstream others media; do
-        for patch_file in "$GAOKUN_DIR/patches/$series"/*.patch; do
-            resolution="$patch_file"
-            if [[ -f "$PATCH_DIR/$series/$(basename "$patch_file")" ]]; then
-                resolution="$PATCH_DIR/$series/$(basename "$patch_file")"
-            fi
-            if git -C "$KERN_SRC" apply --reverse --check "$resolution" >/dev/null 2>&1; then
-                echo "skip already-applied patch: $resolution"
-                continue
-            fi
-            git -C "$KERN_SRC" am "$resolution"
-        done
+        apply_series "$series" "$GAOKUN_DIR/patches/$series"
     done
 
-    local import_patch="$GAOKUN_DIR/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch"
-    if [[ -f "$PATCH_DIR/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch" ]]; then
-        import_patch="$PATCH_DIR/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch"
-    fi
-    git -C "$KERN_SRC" am "$import_patch"
+    apply_patch "$(patch_resolution_for . "$GAOKUN_DIR/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch")"
 }
 
 el2_state() {
