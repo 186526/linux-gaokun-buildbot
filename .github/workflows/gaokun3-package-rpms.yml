@@ -20,6 +20,11 @@ on:
         required: true
         default: false
         type: boolean
+      build_kernelsu:
+        description: Build KernelSU support into the kernel packages
+        required: true
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       kernel_tag:
@@ -33,6 +38,11 @@ on:
         type: string
       build_el2:
         description: Build extra -gaokun3-el2 kernel packages
+        required: false
+        default: false
+        type: boolean
+      build_kernelsu:
+        description: Build KernelSU support into the kernel packages
         required: false
         default: false
         type: boolean
@@ -54,6 +64,7 @@ jobs:
       KERNEL_TAG: ${{ inputs.kernel_tag || github.event.inputs.kernel_tag }}
       KERNEL_BASE: ${{ inputs.kernel_base || github.event.inputs.kernel_base || 'mainline' }}
       BUILD_EL2: ${{ inputs.build_el2 || github.event.inputs.build_el2 || 'false' }}
+      BUILD_KERNELSU: ${{ inputs.build_kernelsu || github.event.inputs.build_kernelsu || 'false' }}
       GAOKUN_DIR: ${{ github.workspace }}
       WORKDIR: ${{ github.workspace }}/build-packages
       KERN_SRC: ${{ github.workspace }}/build-packages/kernel-src
@@ -97,7 +108,10 @@ jobs:
           fi
           profile="std"
           if [[ "$BUILD_EL2" == "true" ]]; then
-            profile="std-el2"
+            profile="${profile}-el2"
+          fi
+          if [[ "$BUILD_KERNELSU" == "true" ]]; then
+            profile="${profile}-ksu"
           fi
           package_release_tag="gaokun3-rpms-${safe_kernel_tag}${base_suffix}-${profile}-$(date -u +%Y%m%d%H%M%S)"
 
@@ -108,7 +122,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.ccache
-          key: gaokun3-packages-rpm-ccache-${{ env.KERNEL_BASE }}-${{ env.KERNEL_TAG }}-${{ env.BUILD_EL2 }}-${{ hashFiles('patches/*.patch', 'patches/**/*.patch', 'patches/el2/*.patch', 'defconfig/**', 'dts/**', 'drivers/**', 'packaging/**', 'firmware/**', 'scripts/ci/*.sh', 'scripts/ci/lib/*.sh', '.github/workflows/gaokun3-package-rpms.yml') }}
+          key: gaokun3-packages-rpm-ccache-${{ env.KERNEL_BASE }}-${{ env.KERNEL_TAG }}-${{ env.BUILD_EL2 }}-${{ env.BUILD_KERNELSU }}-${{ hashFiles('patches/*.patch', 'patches/**/*.patch', 'patches/el2/*.patch', 'patches/kernelsu/**', 'defconfig/**', 'dts/**', 'drivers/**', 'packaging/**', 'firmware/**', 'scripts/ci/*.sh', 'scripts/ci/lib/*.sh', '.github/workflows/gaokun3-package-rpms.yml') }}
           restore-keys: |
             gaokun3-packages-rpm-ccache-${{ env.KERNEL_BASE }}-${{ env.KERNEL_TAG }}-
             gaokun3-packages-rpm-ccache-
@@ -136,6 +150,7 @@ jobs:
             -e KERNEL_TAG="$KERNEL_TAG" \
             -e PACKAGE_RELEASE_TAG="$PACKAGE_RELEASE_TAG" \
             -e BUILD_EL2="$BUILD_EL2" \
+            -e BUILD_KERNELSU="$BUILD_KERNELSU" \
             --user root \
             "fedora:44" \
             bash -euxo pipefail -c '
@@ -157,7 +172,7 @@ jobs:
         uses: softprops/action-gh-release@v2.6.1
         with:
           tag_name: ${{ steps.release_meta.outputs.package_release_tag }}
-          name: gaokun3 package RPMs - ${{ env.KERNEL_TAG }}${{ env.KERNEL_BASE == 'xanmod' && ' (XanMod)' || '' }}${{ env.BUILD_EL2 == 'true' && ' + EL2' || '' }}
+          name: gaokun3 package RPMs - ${{ env.KERNEL_TAG }}${{ env.KERNEL_BASE == 'xanmod' && ' (XanMod)' || '' }}${{ env.BUILD_EL2 == 'true' && ' + EL2' || '' }}${{ env.BUILD_KERNELSU == 'true' && ' + KernelSU' || '' }}
           body_path: ${{ env.ARTIFACT_DIR }}/package-release-body.md
           prerelease: false
           make_latest: false

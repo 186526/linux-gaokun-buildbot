@@ -32,6 +32,11 @@ on:
         required: true
         default: false
         type: boolean
+      build_kernelsu:
+        description: Build and include KernelSU support in the kernel packages
+        required: true
+        default: false
+        type: boolean
       rebuild_package_debs:
         description: Rebuild gaokun package DEBs before image build
         required: true
@@ -49,6 +54,7 @@ jobs:
       kernel_tag: ${{ github.event.inputs.kernel_tag }}
       kernel_base: ${{ github.event.inputs.kernel_base }}
       build_el2: ${{ github.event.inputs.build_el2 == 'true' }}
+      build_kernelsu: ${{ github.event.inputs.build_kernelsu == 'true' }}
     secrets: inherit
 
   build-and-release:
@@ -63,6 +69,7 @@ jobs:
       DESKTOP_ENVIRONMENT: ${{ github.event.inputs.desktop_environment }}
       EXTRA_PACKAGES: ${{ github.event.inputs.extra_packages }}
       BUILD_EL2: ${{ github.event.inputs.build_el2 }}
+      BUILD_KERNELSU: ${{ github.event.inputs.build_kernelsu }}
       IMAGE_SIZE: 12G
       IMAGE_CHUNK_SIZE: 1900M
       GAOKUN_DIR: ${{ github.workspace }}
@@ -106,7 +113,10 @@ jobs:
             fi
             profile="std"
             if [[ "$BUILD_EL2" == "true" ]]; then
-              profile="std-el2"
+              profile="${profile}-el2"
+            fi
+            if [[ "$BUILD_KERNELSU" == "true" ]]; then
+              profile="${profile}-ksu"
             fi
             prefix="gaokun3-debs-${safe_kernel_tag}${base_suffix}-${profile}-"
 
@@ -159,6 +169,7 @@ jobs:
           manifest_path="$PACKAGE_DEBS_DIR/package-manifest.json"
           manifest_kernel_tag="$(jq -r '.kernel_tag' "$manifest_path")"
           manifest_build_el2="$(jq -r '.build_el2' "$manifest_path")"
+          manifest_build_kernelsu="$(jq -r '.build_kernelsu' "$manifest_path")"
 
           if [[ "$manifest_kernel_tag" != "$KERNEL_TAG" ]]; then
             echo "package release kernel tag mismatch: expected ${KERNEL_TAG}, got ${manifest_kernel_tag}" >&2
@@ -167,6 +178,11 @@ jobs:
 
           if [[ "$BUILD_EL2" == "true" && "$manifest_build_el2" != "true" ]]; then
             echo "package release ${PACKAGE_RELEASE_TAG} does not contain EL2 packages" >&2
+            exit 1
+          fi
+
+          if [[ "$BUILD_KERNELSU" == "true" && "$manifest_build_kernelsu" != "true" ]]; then
+            echo "package release ${PACKAGE_RELEASE_TAG} does not contain KernelSU support" >&2
             exit 1
           fi
 
