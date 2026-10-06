@@ -140,9 +140,26 @@ If you need EL2, it's recommended to first install the standard kernel to rootfs
 ```bash
 rm -rf $KERN_OUT_EL2
 
-# Unwire KernelSU so the staged EL2 apply sees a clean tracked tree
-rm -f $KERN_SRC/drivers/kernelsu
-git -C $KERN_SRC checkout -- drivers/Makefile drivers/Kconfig
+# Unwire KernelSU so the staged EL2 apply sees a clean tracked tree. Remove
+# only KernelSU's own lines so unrelated edits to these files are kept, and
+# remove drivers/kernelsu only when it is the expected KernelSU symlink.
+kernelsu_unwire_line() {
+    local file=$1 line=$2
+    grep -qxF "$line" "$file" || return 0
+    awk -v line="$line" '$0 != line' "$file" > "$file.new" && mv "$file.new" "$file"
+}
+KERNSU_SRC=${KERNSU_SRC:-$WORKDIR/kernelsu-src}
+expected_link=$(realpath -m --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel)
+if [[ -L $KERN_SRC/drivers/kernelsu ]]; then
+    [[ $(readlink $KERN_SRC/drivers/kernelsu) == "$expected_link" ]] || \
+        { echo "$KERN_SRC/drivers/kernelsu is not the KernelSU symlink; leaving it." >&2; exit 1; }
+    rm -f $KERN_SRC/drivers/kernelsu
+fi
+kernelsu_unwire_line $KERN_SRC/drivers/Makefile 'obj-$(CONFIG_KSU) += kernelsu/'
+kernelsu_unwire_line $KERN_SRC/drivers/Kconfig 'source "drivers/kernelsu/Kconfig"'
+# Rewriting those files gives them new inodes and stales the index stat cache;
+# refresh it so the staged apply below still sees them as matching the index.
+git -C $KERN_SRC update-index --refresh >/dev/null 2>&1 || true
 
 git -C $KERN_SRC apply --index $GAOKUN_DIR/patches/el2/*.patch
 git -C $KERN_SRC commit -m "Apply EL2 patches"

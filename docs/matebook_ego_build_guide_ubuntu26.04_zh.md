@@ -139,9 +139,26 @@ ccache -s
 ```bash
 rm -rf $KERN_OUT_EL2
 
-# 先移除 KernelSU 接线，保证 staged apply 面对的是干净的已跟踪树
-rm -f $KERN_SRC/drivers/kernelsu
-git -C $KERN_SRC checkout -- drivers/Makefile drivers/Kconfig
+# 先移除 KernelSU 接线，保证 staged apply 面对的是干净的已跟踪树。
+# 只删除 KernelSU 自己写入的行，保留对这两个文件的无关改动；仅当
+# drivers/kernelsu 是指向预期 KernelSU clone 的符号链接时才删除它。
+kernelsu_unwire_line() {
+    local file=$1 line=$2
+    grep -qxF "$line" "$file" || return 0
+    awk -v line="$line" '$0 != line' "$file" > "$file.new" && mv "$file.new" "$file"
+}
+KERNSU_SRC=${KERNSU_SRC:-$WORKDIR/kernelsu-src}
+expected_link=$(realpath -m --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel)
+if [[ -L $KERN_SRC/drivers/kernelsu ]]; then
+    [[ $(readlink $KERN_SRC/drivers/kernelsu) == "$expected_link" ]] || \
+        { echo "$KERN_SRC/drivers/kernelsu 不是 KernelSU 符号链接，保留不动。" >&2; exit 1; }
+    rm -f $KERN_SRC/drivers/kernelsu
+fi
+kernelsu_unwire_line $KERN_SRC/drivers/Makefile 'obj-$(CONFIG_KSU) += kernelsu/'
+kernelsu_unwire_line $KERN_SRC/drivers/Kconfig 'source "drivers/kernelsu/Kconfig"'
+# 重写这两个文件会换掉 inode，使索引的 stat 缓存失效；刷新索引，保证下面的
+# staged apply 仍然认为它们与索引一致。
+git -C $KERN_SRC update-index --refresh >/dev/null 2>&1 || true
 
 git -C $KERN_SRC apply --index $GAOKUN_DIR/patches/el2/*.patch
 git -C $KERN_SRC commit -m "Apply EL2 patches"
