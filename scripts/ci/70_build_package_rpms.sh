@@ -8,6 +8,7 @@ set -euo pipefail
 : "${PACKAGE_RELEASE_TAG:?missing PACKAGE_RELEASE_TAG}"
 
 BUILD_EL2="${BUILD_EL2:-false}"
+BUILD_KERNELSU="${BUILD_KERNELSU:-false}"
 KERN_SRC_BASE="${KERN_SRC_BASE:-${KERN_SRC:-}}"
 KERN_OUT="${KERN_OUT:-}"
 KERN_SRC_EL2="${KERN_SRC_EL2:-${KERN_SRC:-}}"
@@ -252,6 +253,7 @@ cat >"$ARTIFACT_DIR/package-manifest.json" <<EOF
   "package_release_tag": "${PACKAGE_RELEASE_TAG}",
   "kernel_tag": "${KERNEL_TAG}",
   "build_el2": ${BUILD_EL2},
+  "build_kernelsu": ${BUILD_KERNELSU},
   "built_at_utc": "${BUILD_TIME_UTC}",
   "firmware_version": "${FIRMWARE_RPM_VERSION}",
   "kernels": {
@@ -276,6 +278,7 @@ cat >"$ARTIFACT_DIR/package-release-body.md" <<EOF
 - Package Tag: \`${PACKAGE_RELEASE_TAG}\`
 - Kernel Tag: \`${KERNEL_TAG}\`
 - EL2 Package Set Included: \`${BUILD_EL2}\`
+- KernelSU Support Included: \`${BUILD_KERNELSU}\`
 - Firmware Version: \`${FIRMWARE_RPM_VERSION}\`
 - Architecture: \`aarch64\`
 - Build Time (UTC): \`${BUILD_TIME_UTC}\`
