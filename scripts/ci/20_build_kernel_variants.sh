@@ -9,11 +9,17 @@ set -euo pipefail
 . "$GAOKUN_DIR/scripts/ci/lib/select_base.sh"
 resolve_kernel_base
 
+# shellcheck source=lib/kernelsu.sh
+. "$GAOKUN_DIR/scripts/ci/lib/kernelsu.sh"
+
 KERN_OUT="${KERN_OUT:-$WORKDIR/kernel-out}"
 KERN_SRC_BASE="${KERN_SRC_BASE:-$WORKDIR/mainline-linux-base}"
 KERN_SRC_EL2="${KERN_SRC_EL2:-$KERN_SRC}"
 KERN_OUT_EL2="${KERN_OUT_EL2:-}"
 BUILD_EL2="${BUILD_EL2:-false}"
+# Opt-in: when true, every requested variant is built with the pinned KernelSU
+# integration applied before its kernel is configured.
+BUILD_KERNELSU="${BUILD_KERNELSU:-false}"
 
 if [[ "$(uname -m)" == "aarch64" ]]; then
   CROSS_COMPILE="${CROSS_COMPILE:-}"
@@ -38,6 +44,7 @@ build_variant() {
   local src_dir="$1"
   local out_dir="$2"
   local localversion="${3:-}"
+  local kernelsu="${4:-false}"
 
   rm -rf "$out_dir"
   mkdir -p "$out_dir"
@@ -49,7 +56,18 @@ build_variant() {
     "$src_dir"/scripts/config --file "$out_dir/.config" --set-str LOCALVERSION "$localversion"
   fi
 
+  # KernelSU has to be enabled in the generated .config before olddefconfig
+  # resolves the unmet KPROBES dependency.
+  if [[ "$kernelsu" == "true" ]]; then
+    configure_kernel_su "$src_dir" "$out_dir"
+  fi
+
   make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" olddefconfig
+
+  if [[ "$kernelsu" == "true" ]]; then
+    assert_kernelsu_enabled "$out_dir"
+  fi
+
   make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" -j"$(nproc)"
   make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" modules_prepare
 }
@@ -106,8 +124,20 @@ apply_series others "$GAOKUN_DIR"/patches/others
 apply_series media "$GAOKUN_DIR"/patches/media
 apply_patch "$(patch_resolution_for . "$GAOKUN_DIR/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch")"
 
+# Wire the pinned KernelSU into the patched source tree before the variant is
+# configured. Both the standard and the EL2 variant below are built from this
+# wired tree.
+if [[ "$BUILD_KERNELSU" == "true" ]]; then
+  echo "integrating KernelSU $KERNSU_REF ($KERNSU_COMMIT) into $KERN_SRC"
+  if ! kernelsu_desc="$(integrate_kernelsu "$KERN_SRC")"; then
+    echo "KernelSU integration failed for $KERN_SRC" >&2
+    exit 1
+  fi
+  echo "KernelSU integration: $kernelsu_desc"
+fi
+
 ccache -z || true
-build_variant "$KERN_SRC" "$KERN_OUT"
+build_variant "$KERN_SRC" "$KERN_OUT" "" "$BUILD_KERNELSU"
 ccache -s || true
 
 BASE_KREL="$(cat "$KERN_OUT/include/config/kernel.release")"
@@ -125,11 +155,18 @@ configure_git_identity "$KERN_SRC_EL2"
 rm -rf "$KERN_OUT_EL2"
 make -C "$KERN_SRC_EL2" O="$KERN_OUT_EL2" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" clean
 apply_el2_series
+if [[ "$BUILD_KERNELSU" == "true" ]]; then
+  if ! kernelsu_desc="$(integrate_kernelsu "$KERN_SRC_EL2")"; then
+    echo "KernelSU integration failed for $KERN_SRC_EL2" >&2
+    exit 1
+  fi
+  echo "KernelSU integration: $kernelsu_desc"
+fi
 git -C "$KERN_SRC_EL2" add -A
 git -C "$KERN_SRC_EL2" commit -m "Apply EL2 patches"
 
 ccache -z || true
-build_variant "$KERN_SRC_EL2" "$KERN_OUT_EL2" "-gaokun3-el2"
+build_variant "$KERN_SRC_EL2" "$KERN_OUT_EL2" "-gaokun3-el2" "$BUILD_KERNELSU"
 ccache -s || true
 
 EL2_KREL="$(cat "$KERN_OUT_EL2/include/config/kernel.release")"
