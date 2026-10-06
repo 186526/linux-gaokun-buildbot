@@ -4,7 +4,7 @@ English | [中文](docs/README_zh.md)
 
 Build scripts, patches, kernel config, DTS files, tools, and firmware for Linux images targeting the Huawei MateBook E Go 2023 (codename `gaokun3`) based on Qualcomm Snapdragon 8cx Gen3 (`SC8280XP`).
 
-The image pipeline now uses `systemd-boot` by default and can optionally build a second EL2 kernel variant with `CONFIG_LOCALVERSION="-gaokun3-el2"`.
+The image pipeline now uses `systemd-boot` by default and can optionally build a second EL2 kernel variant with `CONFIG_LOCALVERSION="-gaokun3-el2"`. Builds can also opt into the KernelSU integration with `BUILD_KERNELSU`.
 
 ## What is included
 
@@ -45,6 +45,7 @@ The package pipeline builds and installs dedicated package sets:
 - `others/0012`: local change to report the panel orientation from the device tree (`rotation`), so plymouth and compositors auto-rotate the built-in display on boot
 - `media/*`: adapted from the [jhovold/linux](https://github.com/jhovold/linux/commits/wip/sc8280xp-6.16) to add SC8280XP Venus support
 - `0099`: local patch in this repository to import the current DTS files and `gaokun3_defconfig`
+- **[Optional]** `kernelsu/PINNED_REVISION.md`: records the pinned upstream KernelSU revision. KernelSU is not vendored; when `BUILD_KERNELSU=true` the build clones `https://github.com/tiann/KernelSU.git` at `v3.3.0` (`932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e`) and wires it into the kernel tree before configuration, so both the standard and EL2 variants include KernelSU.
 - **[Optional]** `el2/*`: adapted from [TravMurav/linux](https://github.com/TravMurav/linux/tree/x13s-6.18-v1.1-cxsd) for the EL2 boot path, including SMP2P handover, remoteproc attach/restart flow, SCM/SHM owner handling, and related rpmsg/QRTR/pmic_glink stability fixes
 - **[Optional]** `xanmod/*`: base-local overrides for `upstream/0018` and `0099` when building against an [XanMod](https://gitlab.com/xanmod/linux) base (`kernel_base=xanmod`); patches already present in the base (e.g. `upstream/0017`) are skipped automatically
 
@@ -65,6 +66,41 @@ The image and local-install workflows now follow the standard `kernel-install` +
 - Ubuntu DTBs are installed in `/usr/lib/linux-image-<kernel-release>/qcom/` for `kernel-install`, plus `/boot/dtb-<kernel-release>` as a compatibility copy.
 - Fedora DTBs are installed in `/usr/lib/modules/<kernel-release>/dtb/qcom/` for `kernel-install`, plus `/boot/dtb-<kernel-release>/qcom/` as a compatibility copy.
 - The Gaokun3 image scripts provide `/etc/kernel/cmdline` and `/etc/kernel/devicetree`, then call `kernel-install add` to populate the final BLS entry.
+
+## Local builds with KernelSU
+
+The local helper `scripts/local/build_kernel.sh` can integrate KernelSU. It is interactive by default, but every prompt has a non-interactive override, so it can also run unattended:
+
+```bash
+export KERNEL_TAG=7.2.9-xanmod1   # real XanMod tag
+export KERNEL_BASE=xanmod
+export BUILD_KERNELSU=true       # clone and wire pinned KernelSU
+export BUILD_EL2=true            # build the standard kernel and the EL2 kernel
+export INSTALL_KERNEL=false      # build only, do not install
+scripts/local/build_kernel.sh < /dev/null
+```
+
+With stdin closed and the overrides above set, the run is fully non-interactive: the remaining prompts (toolchain install, kernel pull, mirror) fall back to their documented defaults instead of aborting.
+
+Overrides and defaults:
+
+| Variable | Purpose | Default when unset |
+| -------- | ------- | ------------------ |
+| `BUILD_KERNELSU` | Wire the pinned KernelSU into the kernel | prompt, defaults to yes |
+| `EL2_CHOICE` | `y` (EL2 only), `n` (standard only), `both` | prompt, defaults to `n` |
+| `BUILD_EL2` | Convenience alias for `EL2_CHOICE=both` | unset |
+| `INSTALL_DEPS` | Install the minimal build toolchain | prompt, defaults to no |
+| `PULL_KERNEL` | Pull the kernel and apply patches when the tree is missing | prompt, defaults to no |
+| `USE_MIRROR` | Use the Chinese kernel mirror (mainline base only) | prompt, defaults to yes |
+| `INSTALL_KERNEL` | Install each built kernel after it compiles | prompt per kernel, defaults to yes |
+| `KERNSU_URL` / `KERNSU_REF` / `KERNSU_COMMIT` / `KERNSU_SRC` | KernelSU clone source, pinned ref and commit, clone directory | `tiann/KernelSU.git`, `v3.3.0`, the pinned commit, `$WORKDIR/kernelsu-src` |
+
+Notes:
+
+- `BUILD_EL2`/`EL2_CHOICE` preserve the original selection semantics: `EL2_CHOICE=y` builds only EL2, `n` only standard, `both` (or `BUILD_EL2=true`) both.
+- KernelSU is cloned at the pinned revision and wired into the source tree before `gaokun3_defconfig`, so both the standard (`$KERN_OUT`) and the EL2 (`$KERN_OUT_EL2`) variants include KernelSU; the EL2 variant keeps its `-gaokun3-el2` `CONFIG_LOCALVERSION` suffix and the DTB name is unchanged.
+- A KernelSU build needs network access to `github.com` at build time (the clone). No extra packages are required. The helper enables `CONFIG_KPROBES`, `CONFIG_FTRACE`, and `CONFIG_KSU` and verifies `CONFIG_KSU=y`/`CONFIG_KPROBES=y`/`CONFIG_TRACEPOINTS=y` in each variant's `.config`.
+- If the clone or checkout fails, the helper fails with an explicit message instead of silently building a kernel without KernelSU. Set `BUILD_KERNELSU=false` to opt out.
 
 ## Getting started
 

@@ -92,12 +92,73 @@ git am $GAOKUN_DIR/patches/others/*.patch
 git am $GAOKUN_DIR/patches/media/*.patch
 git am $GAOKUN_DIR/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch
 
+# 可选：在生成内核配置前接入固定版本的 KernelSU。在本段之前设
+# BUILD_KERNELSU=false（保留本段、不要删除）即不启用 KernelSU；下面的 EL2 步骤
+# 以同一标志为准，因此标准与 EL2 变体始终一致。KernelSU 不随仓库分发，而是
+# 克隆后按 scripts/ci/lib/kernelsu.sh 的方式接入。
+KERNSU_SRC=$WORKDIR/kernelsu-src
+
+# 只移除 KernelSU 自己写入的内容：它的符号链接（仅当指向预期 clone 路径时）、
+# drivers/Makefile 的精确 KSU 行、drivers/Kconfig 的精确 source 行。无关改动
+# 保留，外来符号链接不动。与 scripts/local/build_kernel.sh 的 unwire_kernelsu 一致。
+unwire_kernelsu() {
+    local expected_link file line
+    expected_link=$(realpath -m --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel)
+    if [[ -L $KERN_SRC/drivers/kernelsu ]]; then
+        [[ $(readlink $KERN_SRC/drivers/kernelsu) == "$expected_link" ]] || \
+            { echo "$KERN_SRC/drivers/kernelsu 不是 KernelSU 符号链接，保留不动。" >&2; exit 1; }
+        rm -f $KERN_SRC/drivers/kernelsu
+    fi
+    file=$KERN_SRC/drivers/Makefile line='obj-$(CONFIG_KSU) += kernelsu/'
+    if grep -qxF "$line" "$file"; then
+        awk -v line="$line" '$0 != line' "$file" > "$file.new" && mv "$file.new" "$file"
+    fi
+    file=$KERN_SRC/drivers/Kconfig line='source "drivers/kernelsu/Kconfig"'
+    if grep -qxF "$line" "$file"; then
+        awk -v line="$line" '$0 != line' "$file" > "$file.new" && mv "$file.new" "$file"
+    fi
+    # 重写这两个文件会换掉 inode，使索引的 stat 缓存失效；刷新索引，保证后续
+    # staged apply 仍然认为它们与索引一致。
+    git -C $KERN_SRC update-index --refresh >/dev/null 2>&1 || true
+}
+
+BUILD_KERNELSU=${BUILD_KERNELSU:-true}
+export BUILD_KERNELSU
+if [[ $BUILD_KERNELSU == true ]]; then
+    KERNSU_URL=https://github.com/tiann/KernelSU.git
+    KERNSU_COMMIT=932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e
+    rm -rf $KERNSU_SRC
+    git clone $KERNSU_URL $KERNSU_SRC
+    git -C $KERNSU_SRC checkout $KERNSU_COMMIT
+    ln -sfn $(realpath --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel) $KERN_SRC/drivers/kernelsu
+    grep -qxF 'obj-$(CONFIG_KSU) += kernelsu/' $KERN_SRC/drivers/Makefile || \
+        echo 'obj-$(CONFIG_KSU) += kernelsu/' >> $KERN_SRC/drivers/Makefile
+    grep -qxF 'source "drivers/kernelsu/Kconfig"' $KERN_SRC/drivers/Kconfig || \
+        sed -i "$(grep -n '^endmenu' $KERN_SRC/drivers/Kconfig | tail -n1 | cut -d: -f1)i\\
+source \"drivers/kernelsu/Kconfig\"" $KERN_SRC/drivers/Kconfig
+else
+    # 本次不构建 KernelSU：清理上次运行可能留下的接线，避免残留符号链接或
+    # Kconfig source 行破坏下面的 gaokun3_defconfig 步骤。无关改动会被保留。
+    unwire_kernelsu
+fi
+
 mkdir -p $KERN_OUT
 ccache -z
 
 # 根据 patch 后的 gaokun3_defconfig 生成配置，再补齐新内核默认选项
 make O=$KERN_OUT ARCH=arm64 gaokun3_defconfig
+# KernelSU 依赖 KPROBES，其系统调用钩子需要 TRACEPOINTS（由 FTRACE 选中）；
+# 而 defconfig 关闭了 tracing。需在 olddefconfig 前打开这些选项。
+# 以 KernelSU 段落的 BUILD_KERNELSU 为准：不启用 KernelSU 时本段一并跳过。
+if [[ $BUILD_KERNELSU == true ]]; then
+    $KERN_SRC/scripts/config --file $KERN_OUT/.config --enable KPROBES
+    $KERN_SRC/scripts/config --file $KERN_OUT/.config --enable FTRACE
+    $KERN_SRC/scripts/config --file $KERN_OUT/.config --enable KSU
+fi
 make O=$KERN_OUT ARCH=arm64 olddefconfig
+if [[ $BUILD_KERNELSU == true ]]; then
+    grep -qx 'CONFIG_KSU=y' $KERN_OUT/.config || { echo "KernelSU 未启用"; exit 1; }
+fi
 make O=$KERN_OUT ARCH=arm64 -j$(nproc)
 make O=$KERN_OUT ARCH=arm64 modules_prepare
 
@@ -107,17 +168,70 @@ KREL_EL2=""
 ccache -s
 ```
 
-如果你需要 EL2，建议先把标准内核安装到 rootfs，或者先单独备份好 `Image`、`dtb`、`modules` 产物，然后在同一套源码上继续构建带 `-gaokun3-el2` 后缀的内核，EL2 产物单独放到另一个输出目录：
+如果你需要 EL2，建议先把标准内核安装到 rootfs，或者先单独备份好 `Image`、`dtb`、`modules` 产物，然后在同一套源码上继续构建带 `-gaokun3-el2` 后缀的内核，EL2 产物单独放到另一个输出目录。切换 EL2 前要先移除 KernelSU 接线、切换完成后再接回：`git apply --index` 与 `git reset --hard` 只管理已跟踪文件，未跟踪的 `drivers/kernelsu` 符号链接必须在这两步执行前移除。这样 EL2 内核同样会包含 KernelSU。下面的重接线与 `.config` 步骤以与上面 KernelSU 段落相同的 `BUILD_KERNELSU` 标志为准，因此标准与 EL2 变体始终一致，`$KERNSU_SRC` 里残留的旧 clone 也不会只给 EL2 单独启用 KernelSU：
 
 ```bash
 rm -rf $KERN_OUT_EL2
+
+# 先移除 KernelSU 接线，保证 staged apply 面对的是干净的已跟踪树。复用上面
+# KernelSU 段落里定义的同一个安全 unwire（该段在 BUILD_KERNELSU=false 分支也会
+# 调用它）；若 EL2 步骤在全新 shell 中执行，则在此补上定义。它只删除 KernelSU
+# 自己写入的内容，保留无关改动。
+KERNSU_SRC=${KERNSU_SRC:-$WORKDIR/kernelsu-src}
+if ! declare -F unwire_kernelsu >/dev/null; then
+    unwire_kernelsu() {
+        local expected_link file line
+        expected_link=$(realpath -m --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel)
+        if [[ -L $KERN_SRC/drivers/kernelsu ]]; then
+            [[ $(readlink $KERN_SRC/drivers/kernelsu) == "$expected_link" ]] || \
+                { echo "$KERN_SRC/drivers/kernelsu 不是 KernelSU 符号链接，保留不动。" >&2; exit 1; }
+            rm -f $KERN_SRC/drivers/kernelsu
+        fi
+        file=$KERN_SRC/drivers/Makefile line='obj-$(CONFIG_KSU) += kernelsu/'
+        if grep -qxF "$line" "$file"; then
+            awk -v line="$line" '$0 != line' "$file" > "$file.new" && mv "$file.new" "$file"
+        fi
+        file=$KERN_SRC/drivers/Kconfig line='source "drivers/kernelsu/Kconfig"'
+        if grep -qxF "$line" "$file"; then
+            awk -v line="$line" '$0 != line' "$file" > "$file.new" && mv "$file.new" "$file"
+        fi
+        git -C $KERN_SRC update-index --refresh >/dev/null 2>&1 || true
+    }
+fi
+unwire_kernelsu
+
 git -C $KERN_SRC apply --index $GAOKUN_DIR/patches/el2/*.patch
 git -C $KERN_SRC commit -m "Apply EL2 patches"
+
+# 重新把 KernelSU 接入 EL2 源码树，以与标准段落相同的 BUILD_KERNELSU 标志为
+# 准，保证两个变体始终一致。没有 clone 时无需接线，盲目重接线会让
+# Kbuild/Kconfig 指向不存在的目录。默认 false，因此即使残留了旧 clone，只要
+# 跳过了 KernelSU 段落，这里也不会启用 KernelSU。
+BUILD_KERNELSU=${BUILD_KERNELSU:-false}
+KERNSU_SRC=${KERNSU_SRC:-$WORKDIR/kernelsu-src}
+if [[ $BUILD_KERNELSU == true && -d $KERNSU_SRC/kernel ]]; then
+    ln -sfn $(realpath --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel) $KERN_SRC/drivers/kernelsu
+    grep -qxF 'obj-$(CONFIG_KSU) += kernelsu/' $KERN_SRC/drivers/Makefile || \
+        echo 'obj-$(CONFIG_KSU) += kernelsu/' >> $KERN_SRC/drivers/Makefile
+    grep -qxF 'source "drivers/kernelsu/Kconfig"' $KERN_SRC/drivers/Kconfig || \
+        sed -i "$(grep -n '^endmenu' $KERN_SRC/drivers/Kconfig | tail -n1 | cut -d: -f1)i\\
+source \"drivers/kernelsu/Kconfig\"" $KERN_SRC/drivers/Kconfig
+else
+    echo "跳过 KernelSU 接线（BUILD_KERNELSU=$BUILD_KERNELSU，clone 位于 $KERNSU_SRC）。"
+fi
 ccache -z
 
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 gaokun3_defconfig
 $KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --set-str LOCALVERSION "-gaokun3-el2"
+if [[ $BUILD_KERNELSU == true ]]; then
+    $KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable KPROBES
+    $KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable FTRACE
+    $KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable KSU
+fi
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 olddefconfig
+if [[ $BUILD_KERNELSU == true ]]; then
+    grep -qx 'CONFIG_KSU=y' $KERN_OUT_EL2/.config || { echo "KernelSU 未启用"; exit 1; }
+fi
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 -j$(nproc)
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 modules_prepare
 
@@ -125,6 +239,10 @@ KREL_EL2=$(cat $KERN_OUT_EL2/include/config/kernel.release)
 echo $KREL_EL2
 ccache -s
 ```
+
+> **KernelSU 与 EL2 构建。** KernelSU 以接线方式接入源码树、而不是作为补丁提交，因此 `git apply --index` 与 `git reset --hard` 不会管理它。请按上面的步骤在切换 EL2 前移除接线、切换后再接回。这样标准与 EL2 内核都会包含 KernelSU，且内核 release 名保持不变（`<版本>-gaokun3` 与 `<版本>-gaokun3-el2`）。是否构建 KernelSU 由 KernelSU 段落中设置的单一 `BUILD_KERNELSU` 标志控制；标准与 EL2 的接线、`.config` 选项与 `CONFIG_KSU=y` 断言都以它为准，因此设为 `BUILD_KERNELSU=false` 会对两个变体都关闭 KernelSU，并清理上次运行留下的接线，同时保留无关改动；若 `drivers/kernelsu` 是外来符号链接则报错退出、不删除。这段清理由 KernelSU 段落定义并调用，要获得该行为必须保留本段并设 `BUILD_KERNELSU=false`，而不是删除整段。若删除了整段，标准构建不会做任何清理；仅在源码树没有残留接线时才这样做，或先自行删除该符号链接与两行 Kbuild/Kconfig。这与 `scripts/local/build_kernel.sh` 的 `BUILD_KERNELSU` 语义一致。该标志由 KernelSU 段落设置并导出；若在另一个 shell 里执行 EL2 段落，请同样导出 `BUILD_KERNELSU=true`，否则它默认 false 并跳过 KernelSU。
+
+> 交互式脚本 `scripts/local/build_kernel.sh` 已自动完成上述步骤（KernelSU 接入、EL2 切换、各变体 `.config` 选项）。其 `BUILD_KERNELSU` / `EL2_CHOICE` 覆盖变量见仓库 `README.md`。
 
 ---
 
