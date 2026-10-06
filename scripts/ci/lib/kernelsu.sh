@@ -107,33 +107,40 @@ wire_kernelsu_kbuild() {
     return 1
   fi
 
-  if ! file_has_trimmed_line "$makefile" "$KERNSU_MAKEFILE_LINE"; then
-    printf '\n%s\n' "$KERNSU_MAKEFILE_LINE" >>"$makefile"
-  fi
-
+  local endmenu_line=""
   if ! file_has_trimmed_line "$kconfig" "$KERNSU_KCONFIG_LINE"; then
-    local endmenu_line
     endmenu_line="$(grep -n '^endmenu' "$kconfig" | tail -n1 | cut -d: -f1)"
     if [[ -z "$endmenu_line" ]]; then
       echo "no closing endmenu in $kconfig, cannot wire KernelSU into $src_dir" >&2
       return 1
     fi
+  fi
+
+  # Both insertion points are known to be valid now, so neither file is left
+  # half-wired when the other would fail.
+  if ! file_has_trimmed_line "$makefile" "$KERNSU_MAKEFILE_LINE"; then
+    printf '\n%s\n' "$KERNSU_MAKEFILE_LINE" >>"$makefile"
+  fi
+
+  if [[ -n "$endmenu_line" ]]; then
     sed -i "${endmenu_line}i\\
 ${KERNSU_KCONFIG_LINE}" "$kconfig"
   fi
 }
 
-# Wire the pinned KernelSU into $src_dir and print the revision description the
-# caller should record in the variant's temporary commit message.
+# Wire the pinned KernelSU into $src_dir and print a revision description for
+# the build log. Every fallible step is checked before the kernel tree is
+# touched, so a failed fetch or validation returns non-zero without leaving
+# drivers/Makefile, drivers/Kconfig or drivers/kernelsu half-wired.
 integrate_kernelsu() {
   local src_dir="$1"
   local clone_dir kernel_su_commit
 
-  clone_dir="$(fetch_kernelsu)"
-  kernel_su_commit="$(git -C "$clone_dir" rev-parse --short=12 HEAD)"
+  clone_dir="$(fetch_kernelsu)" || return 1
+  kernel_su_commit="$(git -C "$clone_dir" rev-parse --short=12 HEAD)" || return 1
 
-  wire_kernelsu_driver_symlink "$src_dir" "$clone_dir"
-  wire_kernelsu_kbuild "$src_dir"
+  wire_kernelsu_driver_symlink "$src_dir" "$clone_dir" || return 1
+  wire_kernelsu_kbuild "$src_dir" || return 1
 
   printf '%s\n' "KernelSU ${KERNSU_REF} ${kernel_su_commit}"
 }

@@ -129,7 +129,11 @@ apply_patch "$(patch_resolution_for . "$GAOKUN_DIR/patches/0099-arm64-gaokun3-im
 # wired tree.
 if [[ "$BUILD_KERNELSU" == "true" ]]; then
   echo "integrating KernelSU $KERNSU_REF ($KERNSU_COMMIT) into $KERN_SRC"
-  echo "KernelSU integration: $(integrate_kernelsu "$KERN_SRC")"
+  if ! kernelsu_desc="$(integrate_kernelsu "$KERN_SRC")"; then
+    echo "KernelSU integration failed for $KERN_SRC" >&2
+    exit 1
+  fi
+  echo "KernelSU integration: $kernelsu_desc"
 fi
 
 ccache -z || true
@@ -152,7 +156,11 @@ rm -rf "$KERN_OUT_EL2"
 make -C "$KERN_SRC_EL2" O="$KERN_OUT_EL2" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" clean
 apply_el2_series
 if [[ "$BUILD_KERNELSU" == "true" ]]; then
-  echo "KernelSU integration: $(integrate_kernelsu "$KERN_SRC_EL2")"
+  if ! kernelsu_desc="$(integrate_kernelsu "$KERN_SRC_EL2")"; then
+    echo "KernelSU integration failed for $KERN_SRC_EL2" >&2
+    exit 1
+  fi
+  echo "KernelSU integration: $kernelsu_desc"
 fi
 git -C "$KERN_SRC_EL2" add -A
 git -C "$KERN_SRC_EL2" commit -m "Apply EL2 patches"
