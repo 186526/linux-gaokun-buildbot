@@ -7,8 +7,78 @@ GAOKUN_DIR="${GAOKUN_DIR:-$HOME/gaokun/linux-gaokun-buildbot}"
 KERN_SRC="${KERN_SRC:-$HOME/gaokun/mainline-linux}"
 KERN_OUT="${KERN_OUT:-$HOME/gaokun/kernel-out}"
 KERN_OUT_EL2="${KERN_OUT_EL2:-$HOME/gaokun/kernel-out-el2}"
-# Empty means "ask interactively"; the prompt defaults to yes.
+# KernelSU is opt-in. Empty means "ask interactively"; the prompt defaults to
+# yes (a local UX default, separate from the CI default of false).
 BUILD_KERNELSU="${BUILD_KERNELSU:-}"
+# Non-interactive overrides. Leave any of these unset to be prompted for it.
+INSTALL_DEPS="${INSTALL_DEPS:-}"
+PULL_KERNEL="${PULL_KERNEL:-}"
+USE_MIRROR="${USE_MIRROR:-}"
+EL2_CHOICE="${EL2_CHOICE:-}"
+INSTALL_KERNEL="${INSTALL_KERNEL:-}"
+# KernelSU integration inputs, kept identical to scripts/ci/lib/kernelsu.sh and
+# the pinned revision recorded in patches/kernelsu/PINNED_REVISION.md.
+WORKDIR="${WORKDIR:-$HOME/gaokun}"
+KERNSU_URL="${KERNSU_URL:-https://github.com/tiann/KernelSU.git}"
+KERNSU_REF="${KERNSU_REF:-v3.3.0}"
+KERNSU_COMMIT="${KERNSU_COMMIT:-932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e}"
+KERNSU_SRC="${KERNSU_SRC:-$WORKDIR/kernelsu-src}"
+
+# Answer yes/no/other prompts. `read` under `set -e` aborts at EOF, which makes
+# the script unusable from a non-interactive shell; the fallback keeps the
+# documented defaults when no override is set and stdin is closed.
+#   $1 variable holding an explicit answer ("" means ask)
+#   $2 prompt text
+#   $3 default answer used when stdin is not a terminal or is at EOF
+#   $4 optional regex matching an answer that is neither yes nor no (e.g. "both")
+# On success the answer is written back to the variable named by $1.
+prompt_answer() {
+    local -n out="$1"
+    local prompt="$2" default="$3" extra="${4:-}" answer
+
+    # ${out:-} guards the nameref when the caller's variable is still unset
+    # (set -u would otherwise abort before the prompt can run).
+    if [[ -n "${out:-}" ]]; then
+        return 0
+    fi
+
+    if [[ ! -t 0 ]]; then
+        out="$default"
+        echo "$prompt$default (non-interactive default)"
+        return 0
+    fi
+
+    if read -r -p "$prompt" answer; then
+        out="${answer:-$default}"
+    else
+        out="$default"
+        echo "$prompt$default (no input; using default)"
+    fi
+
+    if [[ -n "$extra" && "$out" =~ $extra ]]; then
+        return 0
+    fi
+    if [[ "$out" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+        out="yes"
+    elif [[ "$out" =~ ^([nN][oO]|[nN])$ ]]; then
+        out="no"
+    else
+        out="$default"
+    fi
+}
+
+# Normalise a boolean-ish value to true/false; aborts on an unrecognised value.
+normalize_bool() {
+    local value="$1" name="$2"
+    case "${value,,}" in
+        1|true|yes|y|on) printf 'true\n' ;;
+        0|false|no|n|off|"") printf 'false\n' ;;
+        *)
+            echo "Invalid $name value: $value (expected true or false). Exiting." >&2
+            exit 1
+            ;;
+    esac
+}
 
 if [[ -f /etc/os-release ]]; then
     # shellcheck disable=SC1091
@@ -24,9 +94,8 @@ if [[ "$DISTRO" != "ubuntu" && "$DISTRO" != "fedora" ]]; then
     exit 1
 fi
 
-read -r -p "Install necessary minimal kernel build toolchain? [y/N] [default: n]: " install_deps
-install_deps="${install_deps:-n}"
-if [[ "$install_deps" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+prompt_answer install_deps "Install necessary minimal kernel build toolchain? [y/N] [default: n]: " no
+if [[ "$install_deps" == "yes" ]]; then
     echo "Installing build dependencies for $DISTRO..."
     if [[ "$DISTRO" == "ubuntu" ]]; then
         sudo apt-get update
@@ -53,39 +122,48 @@ else
     CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
 fi
 
-# EL2 selection: BUILD_EL2=true forces "both" (standard + EL2) for the
-# non-interactive, CI-style invocation documented in the guides; otherwise the
-# helper asks, preserving the original standard/EL2/both prompt and default.
-if [[ "${BUILD_EL2:-}" == "true" ]]; then
+# EL2 selection. EL2_CHOICE accepts y/n/both to select standard, EL2, or both
+# without prompting; BUILD_EL2=true is a convenience alias for both. The
+# interactive prompt and its "n" default are preserved when neither is set.
+if [[ -n "$EL2_CHOICE" ]]; then
+    el2_choice="$EL2_CHOICE"
+elif [[ "$(normalize_bool "${BUILD_EL2:-false}" BUILD_EL2)" == "true" ]]; then
     el2_choice="both"
-    echo "BUILD_EL2=true: building both the standard and EL2 kernels."
 else
-    read -r -p "Build EL2 kernel? (Y: only EL2, n: only standard, both: build both) [default: n]: " el2_choice
-    el2_choice="${el2_choice:-n}"
+    prompt_answer el2_choice "Build EL2 kernel? (Y: only EL2, n: only standard, both: build both) [default: n]: " n '^(both|el2|std|standard)$'
+    el2_choice="$el2_choice"
 fi
-
-# KernelSU defaults to enabled for the local helper (the shared public contract
-# is BUILD_KERNELSU; CI workflow inputs default to false unless requested).
-# Set BUILD_KERNELSU=false (or answer n) to build a plain kernel.
-if [[ -z "$BUILD_KERNELSU" ]]; then
-    read -r -p "Build KernelSU into the kernel? [Y/n] [default: Y]: " kernelsu_choice
-    kernelsu_choice="${kernelsu_choice:-Y}"
-    if [[ "$kernelsu_choice" =~ ^([nN][oO]|[nN])$ ]]; then
-        BUILD_KERNELSU="false"
-    else
-        BUILD_KERNELSU="true"
-    fi
-fi
-
-case "${BUILD_KERNELSU,,}" in
-    1|true|yes|y|on) BUILD_KERNELSU="true" ;;
-    0|false|no|n|off|"") BUILD_KERNELSU="false" ;;
+case "${el2_choice,,}" in
+    both) el2_choice="both" ;;
+    y|yes|el2) el2_choice="yes" ;;
+    n|no|std|standard|"") el2_choice="no" ;;
     *)
-        echo "Invalid BUILD_KERNELSU value: $BUILD_KERNELSU (expected true or false). Exiting." >&2
+        echo "Invalid EL2_CHOICE value: $el2_choice (expected y, n, or both). Exiting." >&2
         exit 1
         ;;
 esac
+
+# KernelSU: prompt defaults to yes; the value is normalised to true/false.
+if [[ -z "$BUILD_KERNELSU" ]]; then
+    prompt_answer BUILD_KERNELSU "Build KernelSU into the kernel? [Y/n] [default: Y]: " yes
+fi
+BUILD_KERNELSU="$(normalize_bool "$BUILD_KERNELSU" BUILD_KERNELSU)"
 echo "KernelSU build: $BUILD_KERNELSU"
+
+# Map the boolean non-interactive overrides onto the internal answer variables.
+# An unset override leaves the variable empty, so the prompt still runs.
+pull_answer=""
+mirror_choice=""
+install_kernel_answer=""
+if [[ -n "$PULL_KERNEL" ]]; then
+    [[ "$(normalize_bool "$PULL_KERNEL" PULL_KERNEL)" == "true" ]] && pull_answer="yes" || pull_answer="no"
+fi
+if [[ -n "$USE_MIRROR" ]]; then
+    [[ "$(normalize_bool "$USE_MIRROR" USE_MIRROR)" == "true" ]] && mirror_choice="yes" || mirror_choice="no"
+fi
+if [[ -n "$INSTALL_KERNEL" ]]; then
+    [[ "$(normalize_bool "$INSTALL_KERNEL" INSTALL_KERNEL)" == "true" ]] && install_kernel_answer="yes" || install_kernel_answer="no"
+fi
 
 configure_git_identity() {
     if [[ -z "$(git -C "$KERN_SRC" config user.name || true)" ]]; then
@@ -138,71 +216,169 @@ apply_series() {
     done < <(patch_series_files "$series_name" "$shared_dir")
 }
 
-# KernelSU is an optional, default-enabled integration. It must be applied
-# before each variant's kernel configuration step so its Kconfig entries and
-# hooks are present when gaokun3_defconfig/olddefconfig run. It is applied to
-# the shared kernel source tree, so both the standard and the EL2 output
-# directories (built from that same tree) inherit it.
-kernelsu_source_dir() {
-    printf '%s\n' "$GAOKUN_DIR/patches/kernelsu"
+# KernelSU is an opt-in integration. It is not vendored: the pinned upstream
+# tree is cloned and wired into the kernel the same way upstream
+# kernel/setup.sh does it (drivers/kernelsu symlink, drivers/Makefile object
+# line, drivers/Kconfig source line). These functions mirror
+# scripts/ci/lib/kernelsu.sh so a local build and CI produce the same result.
+kernelsu_clone_dir() {
+    printf '%s\n' "${KERNSU_SRC:-$WORKDIR/kernelsu-src}"
 }
 
-kernelsu_patches_present() {
-    local series_dir
-    series_dir="$(kernelsu_source_dir)"
-
-    [[ -d "$series_dir" ]] || return 1
-    compgen -G "$series_dir/*.patch" >/dev/null 2>&1
+kernelsu_driver_link() {
+    printf '%s\n' "$KERN_SRC/drivers/kernelsu"
 }
 
+# True when $2 is a line of the file $1, compared with trailing whitespace
+# stripped.
+kernelsu_file_has_line() {
+    local file="$1" wanted="$2"
+    [[ -f "$file" ]] || return 1
+    grep -qFx "$wanted" <(sed 's/[[:space:]]*$//' "$file")
+}
+
+fetch_kernelsu() {
+    local clone_dir
+    clone_dir="$(kernelsu_clone_dir)"
+
+    # Reuse an existing clone at the pinned commit so "both" mode clones once.
+    if [[ -d "$clone_dir/.git" ]] && \
+        [[ "$(git -C "$clone_dir" rev-parse HEAD 2>/dev/null || true)" == "$KERNSU_COMMIT" ]]; then
+        echo "KernelSU source: $clone_dir @ $KERNSU_COMMIT (reused)"
+        return 0
+    fi
+
+    rm -rf "$clone_dir"
+    mkdir -p "$(dirname "$clone_dir")"
+
+    if ! git clone --quiet "$KERNSU_URL" "$clone_dir"; then
+        echo "ERROR: failed to clone KernelSU from $KERNSU_URL" >&2
+        echo "A KernelSU build needs network access to github.com." >&2
+        echo "Set KERNSU_URL to a reachable mirror, or BUILD_KERNELSU=false to skip it." >&2
+        exit 1
+    fi
+
+    if ! git -C "$clone_dir" checkout --quiet "$KERNSU_COMMIT"; then
+        echo "ERROR: failed to check out KernelSU commit $KERNSU_COMMIT (ref $KERNSU_REF)" >&2
+        exit 1
+    fi
+
+    local resolved
+    resolved="$(git -C "$clone_dir" rev-parse HEAD)"
+    if [[ "$resolved" != "$KERNSU_COMMIT" ]]; then
+        echo "ERROR: KernelSU at $clone_dir resolved to $resolved, expected $KERNSU_COMMIT" >&2
+        exit 1
+    fi
+
+    if [[ ! -d "$clone_dir/kernel" ]]; then
+        echo "ERROR: KernelSU $KERNSU_COMMIT has no kernel/ directory at $clone_dir" >&2
+        exit 1
+    fi
+
+    echo "KernelSU source: $clone_dir @ $resolved"
+}
+
+wire_kernelsu() {
+    local clone_dir="$1"
+    local link drivers_dir makefile kconfig endmenu_line
+    link="$(kernelsu_driver_link)"
+    drivers_dir="$KERN_SRC/drivers"
+    makefile="$drivers_dir/Makefile"
+    kconfig="$drivers_dir/Kconfig"
+
+    if [[ ! -d "$drivers_dir" ]]; then
+        echo "ERROR: missing $drivers_dir, cannot wire KernelSU" >&2
+        exit 1
+    fi
+
+    if [[ -e "$link" && ! -L "$link" ]]; then
+        echo "ERROR: $link exists and is not a symlink; remove it before wiring KernelSU" >&2
+        exit 1
+    fi
+    if [[ -L "$link" && "$(readlink -f "$link")" == "$(readlink -f "$clone_dir/kernel")" ]]; then
+        echo "KernelSU driver symlink already present."
+    else
+        ln -sfn "$(realpath --relative-to="$drivers_dir" "$clone_dir/kernel")" "$link"
+    fi
+
+    if ! kernelsu_file_has_line "$makefile" 'obj-$(CONFIG_KSU) += kernelsu/'; then
+        printf '\n%s\n' 'obj-$(CONFIG_KSU) += kernelsu/' >>"$makefile"
+    fi
+
+    if ! kernelsu_file_has_line "$kconfig" 'source "drivers/kernelsu/Kconfig"'; then
+        endmenu_line="$(grep -n '^endmenu' "$kconfig" | tail -n1 | cut -d: -f1)"
+        if [[ -z "$endmenu_line" ]]; then
+            echo "ERROR: no closing endmenu in $kconfig, cannot wire KernelSU" >&2
+            exit 1
+        fi
+        sed -i "${endmenu_line}i\\
+source \"drivers/kernelsu/Kconfig\"" "$kconfig"
+    fi
+
+    echo "KernelSU wired into $KERN_SRC."
+}
+
+# Clone and wire KernelSU into the kernel source tree. Idempotent: the symlink
+# and Kbuild lines are skipped when already present, and a clone is reused
+# across the standard and EL2 variants.
 apply_kernelsu() {
-    local series_dir
-    local patch_file
-
     if [[ "$BUILD_KERNELSU" != "true" ]]; then
         echo "KernelSU build disabled; skipping KernelSU integration."
         return 0
     fi
 
-    # The source tree may already be prepared, in which case ensure_source_tree
-    # returned early without sourcing the shared helpers.
-    load_patch_helpers
-    resolve_kernel_base
+    fetch_kernelsu
+    wire_kernelsu "$(kernelsu_clone_dir)"
+}
 
-    series_dir="$(kernelsu_source_dir)"
-
-    if ! kernelsu_patches_present; then
-        echo "ERROR: BUILD_KERNELSU=true but no KernelSU patch series was found at:" >&2
-        echo "  $series_dir" >&2
-        echo "Expected one or more *.patch files (for example 0001-...patch)." >&2
-        echo "Re-run with BUILD_KERNELSU=false to build without KernelSU." >&2
-        exit 1
+# Remove the KernelSU wiring from the source tree, restoring it to a clean
+# state. The clone under WORKDIR is left in place for reuse. This is needed
+# before the EL2 transition: `git apply --index` (and `git reset --hard`) only
+# touch tracked paths, so the untracked symlink would otherwise be left behind.
+unwire_kernelsu() {
+    if [[ "$BUILD_KERNELSU" != "true" ]]; then
+        return 0
     fi
 
-    # KernelSU changes are applied to the working tree only and never committed.
-    # The EL2 state machine identifies its temporary commit by the exact message
-    # "Apply EL2 patches" and reverts it with `git reset --hard HEAD~1`; a
-    # KernelSU commit on top would hide that commit from el2_state() and make a
-    # later standard build refuse to reset. Applying with `git apply` (rather
-    # than `git am`) keeps KernelSU uncommitted, leaves the EL2 commit as the
-    # tree's top commit, and lets the reset discard KernelSU cleanly.
-    echo "Applying KernelSU patches from $series_dir..."
-    while IFS= read -r patch_file; do
-        # Idempotent: "both" mode calls this once per variant, and a tree may
-        # already carry KernelSU from a previous run.
-        if git -C "$KERN_SRC" apply --reverse --check "$patch_file" >/dev/null 2>&1; then
-            echo "skip already-applied patch: $patch_file"
-            continue
-        fi
-        if ! git -C "$KERN_SRC" apply "$patch_file"; then
-            echo "ERROR: failed to apply KernelSU patch: $patch_file" >&2
-            echo "The kernel source tree is likely left in a partially patched state." >&2
-            echo "Restore it to a clean standard-patched tree (or set BUILD_KERNELSU=false) and retry." >&2
+    local link
+    link="$(kernelsu_driver_link)"
+    if [[ -L "$link" ]]; then
+        rm -f "$link"
+    fi
+
+    git -C "$KERN_SRC" checkout -- drivers/Makefile drivers/Kconfig 2>/dev/null || true
+}
+
+# Enable KernelSU's configuration in one variant's generated .config. KSU
+# depends on KPROBES and its syscall hook needs TRACEPOINTS (selected by
+# FTRACE); the gaokun3 defconfig disables tracing. olddefconfig drops an unmet
+# tristate silently, so the symbols are enabled here and verified afterwards.
+configure_kernelsu_config() {
+    local out_dir="$1"
+
+    if [[ "$BUILD_KERNELSU" != "true" ]]; then
+        return 0
+    fi
+
+    "$KERN_SRC"/scripts/config --file "$out_dir/.config" --enable KPROBES
+    "$KERN_SRC"/scripts/config --file "$out_dir/.config" --enable FTRACE
+    "$KERN_SRC"/scripts/config --file "$out_dir/.config" --enable KSU
+}
+
+assert_kernelsu_enabled() {
+    local out_dir="$1"
+    local symbol
+
+    if [[ "$BUILD_KERNELSU" != "true" ]]; then
+        return 0
+    fi
+
+    for symbol in CONFIG_KSU CONFIG_KPROBES CONFIG_TRACEPOINTS; do
+        if ! grep -qx "${symbol}=y" "$out_dir/.config"; then
+            echo "ERROR: KernelSU integration did not enable ${symbol}=y in $out_dir/.config" >&2
             exit 1
         fi
-    done < <(patch_series_files kernelsu "$series_dir")
-
-    echo "KernelSU integration applied."
+    done
 }
 
 ensure_source_tree() {
@@ -210,9 +386,8 @@ ensure_source_tree() {
         return 0
     fi
 
-    read -r -p "gaokun3_defconfig not found in kernel directory. Pull kernel and apply patches? [y/N] [default: N]: " response
-    response="${response:-N}"
-    if [[ ! "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+    prompt_answer pull_answer "gaokun3_defconfig not found in kernel directory. Pull kernel and apply patches? [y/N] [default: N]: " no
+    if [[ "$pull_answer" != "yes" ]]; then
         echo "Exiting."
         exit 1
     fi
@@ -231,9 +406,8 @@ ensure_source_tree() {
     if [[ "$KERNEL_BASE" == "xanmod" ]]; then
         KERNEL_URL="${KERNEL_URL:-https://gitlab.com/xanmod/linux.git}"
     else
-        read -r -p "Use Chinese mirror (mirrors.bfsu.edu.cn) for Linux kernel? [Y/n] [default: Y]: " mirror_choice
-        mirror_choice="${mirror_choice:-Y}"
-        if [[ "$mirror_choice" =~ ^([nN][oO]|[nN])$ ]]; then
+        prompt_answer mirror_choice "Use Chinese mirror (mirrors.bfsu.edu.cn) for Linux kernel? [Y/n] [default: Y]: " yes
+        if [[ "$mirror_choice" == "no" ]]; then
             KERNEL_URL="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git"
         else
             KERNEL_URL="https://mirrors.bfsu.edu.cn/git/linux.git"
@@ -298,6 +472,8 @@ build_kernel() {
     local temp_kernel_conf_root=""
     local restore_kernel_conf=0
     local current_state
+    # Per-variant install answer, so "both" mode asks about each kernel.
+    local do_install=""
 
     cd "$KERN_SRC"
     current_state="$(el2_state)"
@@ -310,7 +486,14 @@ build_kernel() {
         case "$current_state" in
             standard)
                 echo "Applying EL2 patches to source tree..."
-                git apply --index "$GAOKUN_DIR"/patches/el2/*.patch
+                # The KernelSU wiring is untracked and would break the staged
+                # apply, so remove it first and re-apply it after the commit.
+                unwire_kernelsu
+                if ! git apply --index "$GAOKUN_DIR"/patches/el2/*.patch; then
+                    echo "ERROR: failed to apply the EL2 patch series." >&2
+                    echo "Restore the source tree to a clean standard-patched state and retry." >&2
+                    exit 1
+                fi
                 git commit -m "Apply EL2 patches"
                 ;;
             el2)
@@ -323,9 +506,9 @@ build_kernel() {
                 ;;
         esac
 
-        # Applied after the EL2 patches so KernelSU lands on top of the EL2
-        # changes, while leaving the "Apply EL2 patches" commit as the tree's
-        # top commit (see apply_kernelsu for why KernelSU is not committed).
+        # Wired after the EL2 commit so the KernelSU wiring is not part of the
+        # temporary "Apply EL2 patches" commit and stays uncommitted, leaving
+        # el2_state()'s top-commit check intact.
         apply_kernelsu
 
         mkdir -p "$out_dir"
@@ -339,6 +522,9 @@ build_kernel() {
         case "$current_state" in
             el2)
                 echo "Reverting EL2 patches to restore standard source tree..."
+                # Drop the untracked KernelSU wiring before resetting so no
+                # stale symlink or Kbuild lines survive the revert.
+                unwire_kernelsu
                 git reset --hard HEAD~1
                 ;;
             standard)
@@ -351,17 +537,22 @@ build_kernel() {
                 ;;
         esac
 
-        # Applied after the EL2 revert: that reset discards any working-tree
-        # KernelSU changes, so a fresh standard config needs KernelSU applied
-        # again (see apply_kernelsu for why KernelSU is never committed).
+        # Wire KernelSU into the (now standard) tree. The untracked wiring was
+        # already removed by unwire_kernelsu before the reset, so this re-creates
+        # it rather than relying on a stale leftover.
         apply_kernelsu
 
         mkdir -p "$out_dir"
         make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" gaokun3_defconfig
     fi
 
+    # KernelSU has to be enabled in this variant's .config before olddefconfig
+    # resolves the unmet KPROBES dependency.
+    configure_kernelsu_config "$out_dir"
+
     echo "Starting build..."
     make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" olddefconfig
+    assert_kernelsu_enabled "$out_dir"
     make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" -j"$(nproc)"
     make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" modules_prepare
 
@@ -369,9 +560,13 @@ build_kernel() {
     krel="$(<"$out_dir/include/config/kernel.release")"
     echo "KREL ($mode): $krel"
 
-    read -r -p "Compilation of $mode kernel finished. Install this kernel ($krel)? [Y/n] [default: Y]: " do_install
-    do_install="${do_install:-Y}"
-    if [[ ! "$do_install" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+    # The INSTALL_KERNEL override applies to every variant; otherwise each
+    # variant prompts (do_install is function-local and starts empty).
+    if [[ -n "$install_kernel_answer" ]]; then
+        do_install="$install_kernel_answer"
+    fi
+    prompt_answer do_install "Compilation of $mode kernel finished. Install this kernel ($krel)? [Y/n] [default: Y]: " yes
+    if [[ "$do_install" != "yes" ]]; then
         echo "Skipping installation for $mode kernel."
         return 0
     fi

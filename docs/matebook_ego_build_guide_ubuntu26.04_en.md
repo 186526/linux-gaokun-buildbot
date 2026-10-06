@@ -92,15 +92,34 @@ git am $GAOKUN_DIR/patches/others/*.patch
 git am $GAOKUN_DIR/patches/media/*.patch
 git am $GAOKUN_DIR/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch
 
-# Optional but enabled by default: apply KernelSU before kernel configuration
-git apply $GAOKUN_DIR/patches/kernelsu/*.patch
+# Optional: integrate the pinned KernelSU before configuring the kernel.
+# Skip this block to build without KernelSU. KernelSU is not vendored; it is
+# cloned and wired in the same way as scripts/ci/lib/kernelsu.sh.
+KERNSU_URL=https://github.com/tiann/KernelSU.git
+KERNSU_COMMIT=932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e
+KERNSU_SRC=$WORKDIR/kernelsu-src
+rm -rf $KERNSU_SRC
+git clone $KERNSU_URL $KERNSU_SRC
+git -C $KERNSU_SRC checkout $KERNSU_COMMIT
+ln -sfn $(realpath --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel) $KERN_SRC/drivers/kernelsu
+grep -qxF 'obj-$(CONFIG_KSU) += kernelsu/' $KERN_SRC/drivers/Makefile || \
+    echo 'obj-$(CONFIG_KSU) += kernelsu/' >> $KERN_SRC/drivers/Makefile
+grep -qxF 'source "drivers/kernelsu/Kconfig"' $KERN_SRC/drivers/Kconfig || \
+    sed -i "$(grep -n '^endmenu' $KERN_SRC/drivers/Kconfig | tail -n1 | cut -d: -f1)i\\
+source \"drivers/kernelsu/Kconfig\"" $KERN_SRC/drivers/Kconfig
 
 mkdir -p $KERN_OUT
 ccache -z
 
 # Generate config from patched gaokun3_defconfig, then fill in new kernel default options
 make O=$KERN_OUT ARCH=arm64 gaokun3_defconfig
+# KernelSU needs KPROBES, and its syscall hook needs TRACEPOINTS (selected by
+# FTRACE); the defconfig disables tracing. Enable them before olddefconfig.
+$KERN_SRC/scripts/config --file $KERN_OUT/.config --enable KPROBES
+$KERN_SRC/scripts/config --file $KERN_OUT/.config --enable FTRACE
+$KERN_SRC/scripts/config --file $KERN_OUT/.config --enable KSU
 make O=$KERN_OUT ARCH=arm64 olddefconfig
+grep -qx 'CONFIG_KSU=y' $KERN_OUT/.config || { echo "KernelSU not enabled"; exit 1; }
 make O=$KERN_OUT ARCH=arm64 -j$(nproc)
 make O=$KERN_OUT ARCH=arm64 modules_prepare
 
@@ -110,17 +129,34 @@ KREL_EL2=""
 ccache -s
 ```
 
-If you need EL2, it's recommended to first install the standard kernel to rootfs, or separately backup the `Image`, `dtb`, `modules` outputs, then continue building the kernel with `-gaokun3-el2` suffix on the same source tree, with EL2 outputs in a separate output directory. Because the KernelSU changes are still uncommitted in the working tree, they remain in place and the EL2 kernel is built with KernelSU too:
+If you need EL2, it's recommended to first install the standard kernel to rootfs, or separately backup the `Image`, `dtb`, `modules` outputs, then continue building the kernel with `-gaokun3-el2` suffix on the same source tree, with EL2 outputs in a separate output directory. Remove the KernelSU wiring before the EL2 transition and re-apply it afterwards: `git apply --index` and `git reset --hard` only manage tracked files, so the untracked `drivers/kernelsu` symlink must not be present when they run. The EL2 kernel is then built with KernelSU too:
 
 ```bash
 rm -rf $KERN_OUT_EL2
+
+# Unwire KernelSU so the staged EL2 apply sees a clean tracked tree
+rm -f $KERN_SRC/drivers/kernelsu
+git -C $KERN_SRC checkout -- drivers/Makefile drivers/Kconfig
+
 git -C $KERN_SRC apply --index $GAOKUN_DIR/patches/el2/*.patch
 git -C $KERN_SRC commit -m "Apply EL2 patches"
+
+# Re-wire KernelSU into the EL2 tree
+ln -sfn $(realpath --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel) $KERN_SRC/drivers/kernelsu
+grep -qxF 'obj-$(CONFIG_KSU) += kernelsu/' $KERN_SRC/drivers/Makefile || \
+    echo 'obj-$(CONFIG_KSU) += kernelsu/' >> $KERN_SRC/drivers/Makefile
+grep -qxF 'source "drivers/kernelsu/Kconfig"' $KERN_SRC/drivers/Kconfig || \
+    sed -i "$(grep -n '^endmenu' $KERN_SRC/drivers/Kconfig | tail -n1 | cut -d: -f1)i\\
+source \"drivers/kernelsu/Kconfig\"" $KERN_SRC/drivers/Kconfig
 ccache -z
 
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 gaokun3_defconfig
 $KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --set-str LOCALVERSION "-gaokun3-el2"
+$KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable KPROBES
+$KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable FTRACE
+$KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable KSU
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 olddefconfig
+grep -qx 'CONFIG_KSU=y' $KERN_OUT_EL2/.config || { echo "KernelSU not enabled"; exit 1; }
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 -j$(nproc)
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 modules_prepare
 
@@ -129,7 +165,9 @@ echo $KREL_EL2
 ccache -s
 ```
 
-> **KernelSU and the EL2 build.** The KernelSU changes are applied with `git apply`, so they are never committed. The EL2 step above commits only the EL2 patches as a temporary `Apply EL2 patches` commit, which leaves the uncommitted KernelSU changes in place; the EL2 kernel therefore also includes KernelSU. Skip the `git apply $GAOKUN_DIR/patches/kernelsu/*.patch` line above to build without KernelSU.
+> **KernelSU and the EL2 build.** KernelSU is wired into the tree rather than committed as a patch, so `git apply --index` and `git reset --hard` do not manage it. Unwire it before the EL2 transition and re-wire it after, as shown above. Both the standard and the EL2 kernel then contain KernelSU with unchanged release names (`<version>-gaokun3` and `<version>-gaokun3-el2`). To build without KernelSU, skip the KernelSU block entirely.
+
+> The interactive helper `scripts/local/build_kernel.sh` automates all of the above (KernelSU wiring, the EL2 transition, and the per-variant `.config` symbols). See the repository `README.md` for its `BUILD_KERNELSU` / `EL2_CHOICE` overrides.
 
 ---
 

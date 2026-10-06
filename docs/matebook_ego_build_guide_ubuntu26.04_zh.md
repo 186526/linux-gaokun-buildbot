@@ -92,15 +92,33 @@ git am $GAOKUN_DIR/patches/others/*.patch
 git am $GAOKUN_DIR/patches/media/*.patch
 git am $GAOKUN_DIR/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch
 
-# 可选但默认启用：在生成内核配置前应用 KernelSU
-git apply $GAOKUN_DIR/patches/kernelsu/*.patch
+# 可选：在生成内核配置前接入固定版本的 KernelSU。跳过本段即不启用 KernelSU。
+# KernelSU 不随仓库分发，而是克隆后按 scripts/ci/lib/kernelsu.sh 的方式接入。
+KERNSU_URL=https://github.com/tiann/KernelSU.git
+KERNSU_COMMIT=932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e
+KERNSU_SRC=$WORKDIR/kernelsu-src
+rm -rf $KERNSU_SRC
+git clone $KERNSU_URL $KERNSU_SRC
+git -C $KERNSU_SRC checkout $KERNSU_COMMIT
+ln -sfn $(realpath --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel) $KERN_SRC/drivers/kernelsu
+grep -qxF 'obj-$(CONFIG_KSU) += kernelsu/' $KERN_SRC/drivers/Makefile || \
+    echo 'obj-$(CONFIG_KSU) += kernelsu/' >> $KERN_SRC/drivers/Makefile
+grep -qxF 'source "drivers/kernelsu/Kconfig"' $KERN_SRC/drivers/Kconfig || \
+    sed -i "$(grep -n '^endmenu' $KERN_SRC/drivers/Kconfig | tail -n1 | cut -d: -f1)i\\
+source \"drivers/kernelsu/Kconfig\"" $KERN_SRC/drivers/Kconfig
 
 mkdir -p $KERN_OUT
 ccache -z
 
 # 根据 patch 后的 gaokun3_defconfig 生成配置，再补齐新内核默认选项
 make O=$KERN_OUT ARCH=arm64 gaokun3_defconfig
+# KernelSU 依赖 KPROBES，其系统调用钩子需要 TRACEPOINTS（由 FTRACE 选中）；
+# 而 defconfig 关闭了 tracing。需在 olddefconfig 前打开这些选项。
+$KERN_SRC/scripts/config --file $KERN_OUT/.config --enable KPROBES
+$KERN_SRC/scripts/config --file $KERN_OUT/.config --enable FTRACE
+$KERN_SRC/scripts/config --file $KERN_OUT/.config --enable KSU
 make O=$KERN_OUT ARCH=arm64 olddefconfig
+grep -qx 'CONFIG_KSU=y' $KERN_OUT/.config || { echo "KernelSU 未启用"; exit 1; }
 make O=$KERN_OUT ARCH=arm64 -j$(nproc)
 make O=$KERN_OUT ARCH=arm64 modules_prepare
 
@@ -110,17 +128,34 @@ KREL_EL2=""
 ccache -s
 ```
 
-如果你需要 EL2，建议先把标准内核安装到 rootfs，或者先单独备份好 `Image`、`dtb`、`modules` 产物，然后在同一套源码上继续构建带 `-gaokun3-el2` 后缀的内核，EL2 产物单独放到另一个输出目录。由于 KernelSU 的改动仍未提交、留在工作区中，因此 EL2 内核同样会包含 KernelSU：
+如果你需要 EL2，建议先把标准内核安装到 rootfs，或者先单独备份好 `Image`、`dtb`、`modules` 产物，然后在同一套源码上继续构建带 `-gaokun3-el2` 后缀的内核，EL2 产物单独放到另一个输出目录。切换 EL2 前要先移除 KernelSU 接线、切换完成后再接回：`git apply --index` 与 `git reset --hard` 只管理已跟踪文件，未跟踪的 `drivers/kernelsu` 符号链接必须在这两步执行前移除。这样 EL2 内核同样会包含 KernelSU：
 
 ```bash
 rm -rf $KERN_OUT_EL2
+
+# 先移除 KernelSU 接线，保证 staged apply 面对的是干净的已跟踪树
+rm -f $KERN_SRC/drivers/kernelsu
+git -C $KERN_SRC checkout -- drivers/Makefile drivers/Kconfig
+
 git -C $KERN_SRC apply --index $GAOKUN_DIR/patches/el2/*.patch
 git -C $KERN_SRC commit -m "Apply EL2 patches"
+
+# 重新把 KernelSU 接入 EL2 源码树
+ln -sfn $(realpath --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel) $KERN_SRC/drivers/kernelsu
+grep -qxF 'obj-$(CONFIG_KSU) += kernelsu/' $KERN_SRC/drivers/Makefile || \
+    echo 'obj-$(CONFIG_KSU) += kernelsu/' >> $KERN_SRC/drivers/Makefile
+grep -qxF 'source "drivers/kernelsu/Kconfig"' $KERN_SRC/drivers/Kconfig || \
+    sed -i "$(grep -n '^endmenu' $KERN_SRC/drivers/Kconfig | tail -n1 | cut -d: -f1)i\\
+source \"drivers/kernelsu/Kconfig\"" $KERN_SRC/drivers/Kconfig
 ccache -z
 
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 gaokun3_defconfig
 $KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --set-str LOCALVERSION "-gaokun3-el2"
+$KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable KPROBES
+$KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable FTRACE
+$KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable KSU
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 olddefconfig
+grep -qx 'CONFIG_KSU=y' $KERN_OUT_EL2/.config || { echo "KernelSU 未启用"; exit 1; }
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 -j$(nproc)
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 modules_prepare
 
@@ -129,7 +164,9 @@ echo $KREL_EL2
 ccache -s
 ```
 
-> **KernelSU 与 EL2 构建。** KernelSU 改动通过 `git apply` 应用，因此不会产生提交。上面的 EL2 步骤只把 EL2 补丁提交为一个临时的 `Apply EL2 patches` 提交，未提交的 KernelSU 改动仍然保留，所以 EL2 内核同样包含 KernelSU。若不想启用 KernelSU，请跳过上面的 `git apply $GAOKUN_DIR/patches/kernelsu/*.patch` 一行。
+> **KernelSU 与 EL2 构建。** KernelSU 以接线方式接入源码树、而不是作为补丁提交，因此 `git apply --index` 与 `git reset --hard` 不会管理它。请按上面的步骤在切换 EL2 前移除接线、切换后再接回。这样标准与 EL2 内核都会包含 KernelSU，且内核 release 名保持不变（`<版本>-gaokun3` 与 `<版本>-gaokun3-el2`）。若不想启用 KernelSU，请整段跳过 KernelSU 相关内容。
+
+> 交互式脚本 `scripts/local/build_kernel.sh` 已自动完成上述步骤（KernelSU 接入、EL2 切换、各变体 `.config` 选项）。其 `BUILD_KERNELSU` / `EL2_CHOICE` 覆盖变量见仓库 `README.md`。
 
 ---
 
