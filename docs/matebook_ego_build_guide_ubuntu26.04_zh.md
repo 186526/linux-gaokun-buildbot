@@ -140,7 +140,9 @@ git -C $KERN_SRC checkout -- drivers/Makefile drivers/Kconfig
 git -C $KERN_SRC apply --index $GAOKUN_DIR/patches/el2/*.patch
 git -C $KERN_SRC commit -m "Apply EL2 patches"
 
-# 重新把 KernelSU 接入 EL2 源码树
+# 重新把 KernelSU 接入 EL2 源码树。此处重新赋值 KERNSU_SRC，
+# 以便跳过前面的 KernelSU 段落单独执行本段时也可用。
+KERNSU_SRC=${KERNSU_SRC:-$WORKDIR/kernelsu-src}
 ln -sfn $(realpath --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel) $KERN_SRC/drivers/kernelsu
 grep -qxF 'obj-$(CONFIG_KSU) += kernelsu/' $KERN_SRC/drivers/Makefile || \
     echo 'obj-$(CONFIG_KSU) += kernelsu/' >> $KERN_SRC/drivers/Makefile

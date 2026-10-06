@@ -94,6 +94,12 @@ if [[ "$DISTRO" != "ubuntu" && "$DISTRO" != "fedora" ]]; then
     exit 1
 fi
 
+# The INSTALL_DEPS override must be mapped before the toolchain prompt below.
+install_deps=""
+if [[ -n "$INSTALL_DEPS" ]]; then
+    [[ "$(normalize_bool "$INSTALL_DEPS" INSTALL_DEPS)" == "true" ]] && install_deps="yes" || install_deps="no"
+fi
+
 prompt_answer install_deps "Install necessary minimal kernel build toolchain? [y/N] [default: n]: " no
 if [[ "$install_deps" == "yes" ]]; then
     echo "Installing build dependencies for $DISTRO..."
@@ -280,7 +286,7 @@ fetch_kernelsu() {
 
 wire_kernelsu() {
     local clone_dir="$1"
-    local link drivers_dir makefile kconfig endmenu_line
+    local link drivers_dir makefile kconfig endmenu_line=""
     link="$(kernelsu_driver_link)"
     drivers_dir="$KERN_SRC/drivers"
     makefile="$drivers_dir/Makefile"
@@ -295,22 +301,33 @@ wire_kernelsu() {
         echo "ERROR: $link exists and is not a symlink; remove it before wiring KernelSU" >&2
         exit 1
     fi
+
+    # Resolve the drivers/Kconfig insertion point before writing anything, so a
+    # missing endmenu fails cleanly instead of leaving the tree half-wired. The
+    # `|| true` keeps pipefail from aborting on grep's non-zero "no match"
+    # status before the explicit error below can print.
+    if ! kernelsu_file_has_line "$kconfig" 'source "drivers/kernelsu/Kconfig"'; then
+        endmenu_line="$(grep -n '^endmenu' "$kconfig" | tail -n1 | cut -d: -f1 || true)"
+        if [[ -z "$endmenu_line" ]]; then
+            echo "ERROR: no closing endmenu in $kconfig, cannot wire KernelSU" >&2
+            echo "The kernel tree is unchanged; fix the Kconfig or set BUILD_KERNELSU=false." >&2
+            exit 1
+        fi
+    fi
+
     if [[ -L "$link" && "$(readlink -f "$link")" == "$(readlink -f "$clone_dir/kernel")" ]]; then
         echo "KernelSU driver symlink already present."
     else
         ln -sfn "$(realpath --relative-to="$drivers_dir" "$clone_dir/kernel")" "$link"
     fi
 
+    # Both insertion points are known to be valid here, so neither file is left
+    # half-wired when the other would fail.
     if ! kernelsu_file_has_line "$makefile" 'obj-$(CONFIG_KSU) += kernelsu/'; then
         printf '\n%s\n' 'obj-$(CONFIG_KSU) += kernelsu/' >>"$makefile"
     fi
 
-    if ! kernelsu_file_has_line "$kconfig" 'source "drivers/kernelsu/Kconfig"'; then
-        endmenu_line="$(grep -n '^endmenu' "$kconfig" | tail -n1 | cut -d: -f1)"
-        if [[ -z "$endmenu_line" ]]; then
-            echo "ERROR: no closing endmenu in $kconfig, cannot wire KernelSU" >&2
-            exit 1
-        fi
+    if [[ -n "$endmenu_line" ]]; then
         sed -i "${endmenu_line}i\\
 source \"drivers/kernelsu/Kconfig\"" "$kconfig"
     fi
@@ -335,11 +352,11 @@ apply_kernelsu() {
 # state. The clone under WORKDIR is left in place for reuse. This is needed
 # before the EL2 transition: `git apply --index` (and `git reset --hard`) only
 # touch tracked paths, so the untracked symlink would otherwise be left behind.
+#
+# Unconditional on purpose: a previous run may have left the wiring uncommitted
+# even when this run is not building KernelSU, and that stale wiring would break
+# the staged EL2 apply. Cleaning it is safe when nothing was wired.
 unwire_kernelsu() {
-    if [[ "$BUILD_KERNELSU" != "true" ]]; then
-        return 0
-    fi
-
     local link
     link="$(kernelsu_driver_link)"
     if [[ -L "$link" ]]; then

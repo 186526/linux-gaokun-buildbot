@@ -141,7 +141,9 @@ git -C $KERN_SRC checkout -- drivers/Makefile drivers/Kconfig
 git -C $KERN_SRC apply --index $GAOKUN_DIR/patches/el2/*.patch
 git -C $KERN_SRC commit -m "Apply EL2 patches"
 
-# Re-wire KernelSU into the EL2 tree
+# Re-wire KernelSU into the EL2 tree. KERNSU_SRC is re-asserted here so this
+# block also works when the earlier KernelSU block was skipped or re-run.
+KERNSU_SRC=${KERNSU_SRC:-$WORKDIR/kernelsu-src}
 ln -sfn $(realpath --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel) $KERN_SRC/drivers/kernelsu
 grep -qxF 'obj-$(CONFIG_KSU) += kernelsu/' $KERN_SRC/drivers/Makefile || \
     echo 'obj-$(CONFIG_KSU) += kernelsu/' >> $KERN_SRC/drivers/Makefile
