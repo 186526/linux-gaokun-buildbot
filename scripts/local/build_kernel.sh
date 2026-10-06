@@ -363,6 +363,9 @@ source \"drivers/kernelsu/Kconfig\"" "$kconfig"
 apply_kernelsu() {
     if [[ "$BUILD_KERNELSU" != "true" ]]; then
         echo "KernelSU build disabled; skipping KernelSU integration."
+        # Clean any wiring a previous run left uncommitted, including on the
+        # standard-only path where no EL2 transition would otherwise unwire it.
+        unwire_kernelsu
         return 0
     fi
 
@@ -377,7 +380,8 @@ apply_kernelsu() {
 #
 # Unconditional on purpose: a previous run may have left the wiring uncommitted
 # even when this run is not building KernelSU, and that stale wiring would break
-# the staged EL2 apply. Cleaning it is safe when nothing was wired.
+# the staged EL2 apply or a later `gaokun3_defconfig` once the clone is gone.
+# Cleaning it is safe when nothing was wired.
 unwire_kernelsu() {
     local link
     link="$(kernelsu_driver_link)"

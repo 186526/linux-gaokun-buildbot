@@ -114,11 +114,17 @@ ccache -z
 make O=$KERN_OUT ARCH=arm64 gaokun3_defconfig
 # KernelSU 依赖 KPROBES，其系统调用钩子需要 TRACEPOINTS（由 FTRACE 选中）；
 # 而 defconfig 关闭了 tracing。需在 olddefconfig 前打开这些选项。
-$KERN_SRC/scripts/config --file $KERN_OUT/.config --enable KPROBES
-$KERN_SRC/scripts/config --file $KERN_OUT/.config --enable FTRACE
-$KERN_SRC/scripts/config --file $KERN_OUT/.config --enable KSU
+# 这些行属于上面的 KernelSU 段落：若跳过了该段，drivers/kernelsu 符号链接
+# 不存在，本段也会一并跳过。
+if [[ -d $KERN_SRC/drivers/kernelsu ]]; then
+    $KERN_SRC/scripts/config --file $KERN_OUT/.config --enable KPROBES
+    $KERN_SRC/scripts/config --file $KERN_OUT/.config --enable FTRACE
+    $KERN_SRC/scripts/config --file $KERN_OUT/.config --enable KSU
+fi
 make O=$KERN_OUT ARCH=arm64 olddefconfig
-grep -qx 'CONFIG_KSU=y' $KERN_OUT/.config || { echo "KernelSU 未启用"; exit 1; }
+if [[ -d $KERN_SRC/drivers/kernelsu ]]; then
+    grep -qx 'CONFIG_KSU=y' $KERN_OUT/.config || { echo "KernelSU 未启用"; exit 1; }
+fi
 make O=$KERN_OUT ARCH=arm64 -j$(nproc)
 make O=$KERN_OUT ARCH=arm64 modules_prepare
 

@@ -115,11 +115,17 @@ ccache -z
 make O=$KERN_OUT ARCH=arm64 gaokun3_defconfig
 # KernelSU needs KPROBES, and its syscall hook needs TRACEPOINTS (selected by
 # FTRACE); the defconfig disables tracing. Enable them before olddefconfig.
-$KERN_SRC/scripts/config --file $KERN_OUT/.config --enable KPROBES
-$KERN_SRC/scripts/config --file $KERN_OUT/.config --enable FTRACE
-$KERN_SRC/scripts/config --file $KERN_OUT/.config --enable KSU
+# These lines belong to the KernelSU block above: if you skipped it, the
+# drivers/kernelsu symlink is absent and this section is skipped too.
+if [[ -d $KERN_SRC/drivers/kernelsu ]]; then
+    $KERN_SRC/scripts/config --file $KERN_OUT/.config --enable KPROBES
+    $KERN_SRC/scripts/config --file $KERN_OUT/.config --enable FTRACE
+    $KERN_SRC/scripts/config --file $KERN_OUT/.config --enable KSU
+fi
 make O=$KERN_OUT ARCH=arm64 olddefconfig
-grep -qx 'CONFIG_KSU=y' $KERN_OUT/.config || { echo "KernelSU not enabled"; exit 1; }
+if [[ -d $KERN_SRC/drivers/kernelsu ]]; then
+    grep -qx 'CONFIG_KSU=y' $KERN_OUT/.config || { echo "KernelSU not enabled"; exit 1; }
+fi
 make O=$KERN_OUT ARCH=arm64 -j$(nproc)
 make O=$KERN_OUT ARCH=arm64 modules_prepare
 
