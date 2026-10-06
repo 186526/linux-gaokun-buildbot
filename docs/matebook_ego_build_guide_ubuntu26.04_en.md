@@ -93,11 +93,37 @@ git am $GAOKUN_DIR/patches/media/*.patch
 git am $GAOKUN_DIR/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch
 
 # Optional: integrate the pinned KernelSU before configuring the kernel.
-# Set BUILD_KERNELSU=false before this block (or skip the block entirely) to
-# build without KernelSU; the EL2 step below keys off the same flag, so the
+# Set BUILD_KERNELSU=false before this block (keep the block, do not delete it)
+# to build without KernelSU; the EL2 step below keys off the same flag, so the
 # standard and EL2 variants always agree. KernelSU is not vendored; it is
 # cloned and wired in the same way as scripts/ci/lib/kernelsu.sh.
 KERNSU_SRC=$WORKDIR/kernelsu-src
+
+# Remove only KernelSU's own wiring: its symlink (only when it points at the
+# expected clone path), the exact drivers/Makefile line, and the exact
+# drivers/Kconfig source line. Unrelated edits are kept and a foreign symlink
+# is left alone. Mirrors unwire_kernelsu in scripts/local/build_kernel.sh.
+unwire_kernelsu() {
+    local expected_link file line
+    expected_link=$(realpath -m --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel)
+    if [[ -L $KERN_SRC/drivers/kernelsu ]]; then
+        [[ $(readlink $KERN_SRC/drivers/kernelsu) == "$expected_link" ]] || \
+            { echo "$KERN_SRC/drivers/kernelsu is not the KernelSU symlink; leaving it." >&2; exit 1; }
+        rm -f $KERN_SRC/drivers/kernelsu
+    fi
+    file=$KERN_SRC/drivers/Makefile line='obj-$(CONFIG_KSU) += kernelsu/'
+    if grep -qxF "$line" "$file"; then
+        awk -v line="$line" '$0 != line' "$file" > "$file.new" && mv "$file.new" "$file"
+    fi
+    file=$KERN_SRC/drivers/Kconfig line='source "drivers/kernelsu/Kconfig"'
+    if grep -qxF "$line" "$file"; then
+        awk -v line="$line" '$0 != line' "$file" > "$file.new" && mv "$file.new" "$file"
+    fi
+    # Rewriting those files gives them new inodes and stales the index stat
+    # cache; refresh it so a later staged apply still sees them as matching.
+    git -C $KERN_SRC update-index --refresh >/dev/null 2>&1 || true
+}
+
 BUILD_KERNELSU=${BUILD_KERNELSU:-true}
 export BUILD_KERNELSU
 if [[ $BUILD_KERNELSU == true ]]; then
@@ -112,6 +138,11 @@ if [[ $BUILD_KERNELSU == true ]]; then
     grep -qxF 'source "drivers/kernelsu/Kconfig"' $KERN_SRC/drivers/Kconfig || \
         sed -i "$(grep -n '^endmenu' $KERN_SRC/drivers/Kconfig | tail -n1 | cut -d: -f1)i\\
 source \"drivers/kernelsu/Kconfig\"" $KERN_SRC/drivers/Kconfig
+else
+    # Not building KernelSU this run: clear any wiring a previous run left
+    # behind, so a stale symlink or Kconfig source line does not break the
+    # gaokun3_defconfig step below. Unrelated edits are preserved.
+    unwire_kernelsu
 fi
 
 mkdir -p $KERN_OUT
@@ -145,26 +176,32 @@ If you need EL2, it's recommended to first install the standard kernel to rootfs
 ```bash
 rm -rf $KERN_OUT_EL2
 
-# Unwire KernelSU so the staged EL2 apply sees a clean tracked tree. Remove
-# only KernelSU's own lines so unrelated edits to these files are kept, and
-# remove drivers/kernelsu only when it is the expected KernelSU symlink.
-kernelsu_unwire_line() {
-    local file=$1 line=$2
-    grep -qxF "$line" "$file" || return 0
-    awk -v line="$line" '$0 != line' "$file" > "$file.new" && mv "$file.new" "$file"
-}
+# Unwire KernelSU so the staged EL2 apply sees a clean tracked tree. Reuse the
+# same safe unwire defined in the KernelSU block above (skip path included);
+# define it here too if the EL2 step runs in a fresh shell. It removes only
+# KernelSU's own wiring and keeps unrelated edits.
 KERNSU_SRC=${KERNSU_SRC:-$WORKDIR/kernelsu-src}
-expected_link=$(realpath -m --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel)
-if [[ -L $KERN_SRC/drivers/kernelsu ]]; then
-    [[ $(readlink $KERN_SRC/drivers/kernelsu) == "$expected_link" ]] || \
-        { echo "$KERN_SRC/drivers/kernelsu is not the KernelSU symlink; leaving it." >&2; exit 1; }
-    rm -f $KERN_SRC/drivers/kernelsu
+if ! declare -F unwire_kernelsu >/dev/null; then
+    unwire_kernelsu() {
+        local expected_link file line
+        expected_link=$(realpath -m --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel)
+        if [[ -L $KERN_SRC/drivers/kernelsu ]]; then
+            [[ $(readlink $KERN_SRC/drivers/kernelsu) == "$expected_link" ]] || \
+                { echo "$KERN_SRC/drivers/kernelsu is not the KernelSU symlink; leaving it." >&2; exit 1; }
+            rm -f $KERN_SRC/drivers/kernelsu
+        fi
+        file=$KERN_SRC/drivers/Makefile line='obj-$(CONFIG_KSU) += kernelsu/'
+        if grep -qxF "$line" "$file"; then
+            awk -v line="$line" '$0 != line' "$file" > "$file.new" && mv "$file.new" "$file"
+        fi
+        file=$KERN_SRC/drivers/Kconfig line='source "drivers/kernelsu/Kconfig"'
+        if grep -qxF "$line" "$file"; then
+            awk -v line="$line" '$0 != line' "$file" > "$file.new" && mv "$file.new" "$file"
+        fi
+        git -C $KERN_SRC update-index --refresh >/dev/null 2>&1 || true
+    }
 fi
-kernelsu_unwire_line $KERN_SRC/drivers/Makefile 'obj-$(CONFIG_KSU) += kernelsu/'
-kernelsu_unwire_line $KERN_SRC/drivers/Kconfig 'source "drivers/kernelsu/Kconfig"'
-# Rewriting those files gives them new inodes and stales the index stat cache;
-# refresh it so the staged apply below still sees them as matching the index.
-git -C $KERN_SRC update-index --refresh >/dev/null 2>&1 || true
+unwire_kernelsu
 
 git -C $KERN_SRC apply --index $GAOKUN_DIR/patches/el2/*.patch
 git -C $KERN_SRC commit -m "Apply EL2 patches"
@@ -207,7 +244,7 @@ echo $KREL_EL2
 ccache -s
 ```
 
-> **KernelSU and the EL2 build.** KernelSU is wired into the tree rather than committed as a patch, so `git apply --index` and `git reset --hard` do not manage it. Unwire it before the EL2 transition and re-wire it after, as shown above. Both the standard and the EL2 kernel then contain KernelSU with unchanged release names (`<version>-gaokun3` and `<version>-gaokun3-el2`). Whether KernelSU is built is controlled by the single `BUILD_KERNELSU` flag set in the KernelSU block; both the standard and the EL2 wiring, `.config` enables, and the `CONFIG_KSU=y` assertion are gated on it, so setting `BUILD_KERNELSU=false` (or skipping the block) turns KernelSU off for both variants and leaves no dangling symlink or Kbuild/Kconfig line behind. This mirrors the helper's `BUILD_KERNELSU` semantics in `scripts/local/build_kernel.sh`. The flag is set and exported by the KernelSU block; if you run the EL2 block in a separate shell, export `BUILD_KERNELSU=true` there too, otherwise it defaults to false and skips KernelSU.
+> **KernelSU and the EL2 build.** KernelSU is wired into the tree rather than committed as a patch, so `git apply --index` and `git reset --hard` do not manage it. Unwire it before the EL2 transition and re-wire it after, as shown above. Both the standard and the EL2 kernel then contain KernelSU with unchanged release names (`<version>-gaokun3` and `<version>-gaokun3-el2`). Whether KernelSU is built is controlled by the single `BUILD_KERNELSU` flag set in the KernelSU block; both the standard and the EL2 wiring, `.config` enables, and the `CONFIG_KSU=y` assertion are gated on it, so setting `BUILD_KERNELSU=false` turns KernelSU off for both variants. When it is false (or the block is skipped) both variants first run the safe unwire, so wiring left by an earlier run is removed while unrelated edits are preserved and a foreign `drivers/kernelsu` symlink aborts instead of being deleted. This mirrors the helper's `BUILD_KERNELSU` semantics in `scripts/local/build_kernel.sh`. The flag is set and exported by the KernelSU block; if you run the EL2 block in a separate shell, export `BUILD_KERNELSU=true` there too, otherwise it defaults to false and skips KernelSU.
 
 > The interactive helper `scripts/local/build_kernel.sh` automates all of the above (KernelSU wiring, the EL2 transition, and the per-variant `.config` symbols). See the repository `README.md` for its `BUILD_KERNELSU` / `EL2_CHOICE` overrides.
 
