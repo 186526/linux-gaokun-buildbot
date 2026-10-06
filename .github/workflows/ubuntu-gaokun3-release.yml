@@ -127,7 +127,7 @@ jobs:
               "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
               -o "$releases_json"
 
-            package_release_tag="$(jq -r --arg prefix "$prefix" '.[] | select(.tag_name | startswith($prefix)) | .tag_name' "$releases_json" | head -n 1)"
+            package_release_tag="$(jq -r --arg prefix "$prefix" '[.[] | .tag_name | select(startswith($prefix)) | select((ltrimstr($prefix)) | test("^[0-9]{14}$"))] | first // empty' "$releases_json")"
             if [[ -z "$package_release_tag" ]]; then
               echo "no package release found for prefix ${prefix}" >&2
               exit 1
