@@ -4,7 +4,7 @@ English | [中文](docs/README_zh.md)
 
 Build scripts, patches, kernel config, DTS files, tools, and firmware for Linux images targeting the Huawei MateBook E Go 2023 (codename `gaokun3`) based on Qualcomm Snapdragon 8cx Gen3 (`SC8280XP`).
 
-The image pipeline now uses `systemd-boot` by default and can optionally build a second EL2 kernel variant with `CONFIG_LOCALVERSION="-gaokun3-el2"`.
+The image pipeline now uses `systemd-boot` by default and can optionally build a second EL2 kernel variant with `CONFIG_LOCALVERSION="-gaokun3-el2"`. Builds can also opt into the KernelSU integration with `BUILD_KERNELSU`.
 
 ## What is included
 
@@ -45,6 +45,7 @@ The package pipeline builds and installs dedicated package sets:
 - `others/0012`: local change to report the panel orientation from the device tree (`rotation`), so plymouth and compositors auto-rotate the built-in display on boot
 - `media/*`: adapted from the [jhovold/linux](https://github.com/jhovold/linux/commits/wip/sc8280xp-6.16) to add SC8280XP Venus support
 - `0099`: local patch in this repository to import the current DTS files and `gaokun3_defconfig`
+- **[Optional]** `kernelsu/*`: KernelSU integration applied when `BUILD_KERNELSU=true` (the local helper asks and defaults to yes); applied before kernel configuration so both the standard and EL2 variants include KernelSU
 - **[Optional]** `el2/*`: adapted from [TravMurav/linux](https://github.com/TravMurav/linux/tree/x13s-6.18-v1.1-cxsd) for the EL2 boot path, including SMP2P handover, remoteproc attach/restart flow, SCM/SHM owner handling, and related rpmsg/QRTR/pmic_glink stability fixes
 - **[Optional]** `xanmod/*`: base-local overrides for `upstream/0018` and `0099` when building against an [XanMod](https://gitlab.com/xanmod/linux) base (`kernel_base=xanmod`); patches already present in the base (e.g. `upstream/0017`) are skipped automatically
 
@@ -65,6 +66,22 @@ The image and local-install workflows now follow the standard `kernel-install` +
 - Ubuntu DTBs are installed in `/usr/lib/linux-image-<kernel-release>/qcom/` for `kernel-install`, plus `/boot/dtb-<kernel-release>` as a compatibility copy.
 - Fedora DTBs are installed in `/usr/lib/modules/<kernel-release>/dtb/qcom/` for `kernel-install`, plus `/boot/dtb-<kernel-release>/qcom/` as a compatibility copy.
 - The Gaokun3 image scripts provide `/etc/kernel/cmdline` and `/etc/kernel/devicetree`, then call `kernel-install add` to populate the final BLS entry.
+
+## Local builds with KernelSU
+
+The interactive local helper `scripts/local/build_kernel.sh` can integrate KernelSU and can be driven non-interactively with `BUILD_KERNELSU` and `BUILD_EL2`:
+
+```bash
+export KERNEL_TAG=v7.2.9
+export KERNEL_BASE=xanmod
+export BUILD_EL2=true        # build the standard kernel and the EL2 kernel
+export BUILD_KERNELSU=true   # apply the patches/kernelsu/* series (default: yes)
+scripts/local/build_kernel.sh
+```
+
+- `BUILD_KERNELSU` defaults to enabled: the helper asks `Build KernelSU into the kernel? [Y/n] [default: Y]`, so pressing Enter selects yes. Set `BUILD_KERNELSU=false` to build a plain kernel.
+- KernelSU patches are applied to the kernel source tree before `gaokun3_defconfig`, so both the standard (`$KERN_OUT`) and the EL2 (`$KERN_OUT_EL2`) variants include KernelSU; the EL2 variant keeps its `-gaokun3-el2` `CONFIG_LOCALVERSION` suffix.
+- The KernelSU series must exist under `patches/kernelsu/`. When it is missing or cannot be applied, the helper fails with an explicit message instead of silently building a kernel without KernelSU.
 
 ## Getting started
 

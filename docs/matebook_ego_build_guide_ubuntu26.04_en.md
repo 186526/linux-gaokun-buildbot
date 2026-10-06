@@ -92,6 +92,9 @@ git am $GAOKUN_DIR/patches/others/*.patch
 git am $GAOKUN_DIR/patches/media/*.patch
 git am $GAOKUN_DIR/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch
 
+# Optional but enabled by default: apply KernelSU before kernel configuration
+git apply $GAOKUN_DIR/patches/kernelsu/*.patch
+
 mkdir -p $KERN_OUT
 ccache -z
 
@@ -107,7 +110,7 @@ KREL_EL2=""
 ccache -s
 ```
 
-If you need EL2, it's recommended to first install the standard kernel to rootfs, or separately backup the `Image`, `dtb`, `modules` outputs, then continue building the kernel with `-gaokun3-el2` suffix on the same source tree, with EL2 outputs in a separate output directory:
+If you need EL2, it's recommended to first install the standard kernel to rootfs, or separately backup the `Image`, `dtb`, `modules` outputs, then continue building the kernel with `-gaokun3-el2` suffix on the same source tree, with EL2 outputs in a separate output directory. Because the KernelSU changes are still uncommitted in the working tree, they remain in place and the EL2 kernel is built with KernelSU too:
 
 ```bash
 rm -rf $KERN_OUT_EL2
@@ -125,6 +128,8 @@ KREL_EL2=$(cat $KERN_OUT_EL2/include/config/kernel.release)
 echo $KREL_EL2
 ccache -s
 ```
+
+> **KernelSU and the EL2 build.** The KernelSU changes are applied with `git apply`, so they are never committed. The EL2 step above commits only the EL2 patches as a temporary `Apply EL2 patches` commit, which leaves the uncommitted KernelSU changes in place; the EL2 kernel therefore also includes KernelSU. Skip the `git apply $GAOKUN_DIR/patches/kernelsu/*.patch` line above to build without KernelSU.
 
 ---
 

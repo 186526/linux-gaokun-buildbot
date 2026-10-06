@@ -7,6 +7,8 @@ GAOKUN_DIR="${GAOKUN_DIR:-$HOME/gaokun/linux-gaokun-buildbot}"
 KERN_SRC="${KERN_SRC:-$HOME/gaokun/mainline-linux}"
 KERN_OUT="${KERN_OUT:-$HOME/gaokun/kernel-out}"
 KERN_OUT_EL2="${KERN_OUT_EL2:-$HOME/gaokun/kernel-out-el2}"
+# Empty means "ask interactively"; the prompt defaults to yes.
+BUILD_KERNELSU="${BUILD_KERNELSU:-}"
 
 if [[ -f /etc/os-release ]]; then
     # shellcheck disable=SC1091
@@ -51,8 +53,39 @@ else
     CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
 fi
 
-read -r -p "Build EL2 kernel? (Y: only EL2, n: only standard, both: build both) [default: n]: " el2_choice
-el2_choice="${el2_choice:-n}"
+# EL2 selection: BUILD_EL2=true forces "both" (standard + EL2) for the
+# non-interactive, CI-style invocation documented in the guides; otherwise the
+# helper asks, preserving the original standard/EL2/both prompt and default.
+if [[ "${BUILD_EL2:-}" == "true" ]]; then
+    el2_choice="both"
+    echo "BUILD_EL2=true: building both the standard and EL2 kernels."
+else
+    read -r -p "Build EL2 kernel? (Y: only EL2, n: only standard, both: build both) [default: n]: " el2_choice
+    el2_choice="${el2_choice:-n}"
+fi
+
+# KernelSU defaults to enabled for the local helper (the shared public contract
+# is BUILD_KERNELSU; CI workflow inputs default to false unless requested).
+# Set BUILD_KERNELSU=false (or answer n) to build a plain kernel.
+if [[ -z "$BUILD_KERNELSU" ]]; then
+    read -r -p "Build KernelSU into the kernel? [Y/n] [default: Y]: " kernelsu_choice
+    kernelsu_choice="${kernelsu_choice:-Y}"
+    if [[ "$kernelsu_choice" =~ ^([nN][oO]|[nN])$ ]]; then
+        BUILD_KERNELSU="false"
+    else
+        BUILD_KERNELSU="true"
+    fi
+fi
+
+case "${BUILD_KERNELSU,,}" in
+    1|true|yes|y|on) BUILD_KERNELSU="true" ;;
+    0|false|no|n|off|"") BUILD_KERNELSU="false" ;;
+    *)
+        echo "Invalid BUILD_KERNELSU value: $BUILD_KERNELSU (expected true or false). Exiting." >&2
+        exit 1
+        ;;
+esac
+echo "KernelSU build: $BUILD_KERNELSU"
 
 configure_git_identity() {
     if [[ -z "$(git -C "$KERN_SRC" config user.name || true)" ]]; then
@@ -72,6 +105,27 @@ apply_patch() {
     git -C "$KERN_SRC" am "$resolution"
 }
 
+# Patch-series helpers (patch_series_files, patch_resolution_for,
+# patch_is_already_applied, resolve_kernel_base) live in the shared CI library
+# so local and CI builds select base-local overrides by the same rules. The
+# loader is idempotent because ensure_source_tree can return before sourcing it
+# and apply_kernelsu still needs it for an already-prepared tree.
+load_patch_helpers() {
+    if declare -F patch_series_files >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local helpers="$GAOKUN_DIR/scripts/ci/lib/select_base.sh"
+    if [[ ! -f "$helpers" ]]; then
+        echo "ERROR: shared patch helpers not found: $helpers" >&2
+        echo "Set GAOKUN_DIR to the linux-gaokun-buildbot checkout." >&2
+        exit 1
+    fi
+
+    # shellcheck source=../ci/lib/select_base.sh
+    . "$helpers"
+}
+
 # Apply one series using the shared patch-resolution helpers, so base-local
 # overrides and XanMod-only patches follow the same rules as the CI pipeline.
 apply_series() {
@@ -82,6 +136,73 @@ apply_series() {
     while IFS= read -r patch_file; do
         apply_patch "$patch_file"
     done < <(patch_series_files "$series_name" "$shared_dir")
+}
+
+# KernelSU is an optional, default-enabled integration. It must be applied
+# before each variant's kernel configuration step so its Kconfig entries and
+# hooks are present when gaokun3_defconfig/olddefconfig run. It is applied to
+# the shared kernel source tree, so both the standard and the EL2 output
+# directories (built from that same tree) inherit it.
+kernelsu_source_dir() {
+    printf '%s\n' "$GAOKUN_DIR/patches/kernelsu"
+}
+
+kernelsu_patches_present() {
+    local series_dir
+    series_dir="$(kernelsu_source_dir)"
+
+    [[ -d "$series_dir" ]] || return 1
+    compgen -G "$series_dir/*.patch" >/dev/null 2>&1
+}
+
+apply_kernelsu() {
+    local series_dir
+    local patch_file
+
+    if [[ "$BUILD_KERNELSU" != "true" ]]; then
+        echo "KernelSU build disabled; skipping KernelSU integration."
+        return 0
+    fi
+
+    # The source tree may already be prepared, in which case ensure_source_tree
+    # returned early without sourcing the shared helpers.
+    load_patch_helpers
+    resolve_kernel_base
+
+    series_dir="$(kernelsu_source_dir)"
+
+    if ! kernelsu_patches_present; then
+        echo "ERROR: BUILD_KERNELSU=true but no KernelSU patch series was found at:" >&2
+        echo "  $series_dir" >&2
+        echo "Expected one or more *.patch files (for example 0001-...patch)." >&2
+        echo "Re-run with BUILD_KERNELSU=false to build without KernelSU." >&2
+        exit 1
+    fi
+
+    # KernelSU changes are applied to the working tree only and never committed.
+    # The EL2 state machine identifies its temporary commit by the exact message
+    # "Apply EL2 patches" and reverts it with `git reset --hard HEAD~1`; a
+    # KernelSU commit on top would hide that commit from el2_state() and make a
+    # later standard build refuse to reset. Applying with `git apply` (rather
+    # than `git am`) keeps KernelSU uncommitted, leaves the EL2 commit as the
+    # tree's top commit, and lets the reset discard KernelSU cleanly.
+    echo "Applying KernelSU patches from $series_dir..."
+    while IFS= read -r patch_file; do
+        # Idempotent: "both" mode calls this once per variant, and a tree may
+        # already carry KernelSU from a previous run.
+        if git -C "$KERN_SRC" apply --reverse --check "$patch_file" >/dev/null 2>&1; then
+            echo "skip already-applied patch: $patch_file"
+            continue
+        fi
+        if ! git -C "$KERN_SRC" apply "$patch_file"; then
+            echo "ERROR: failed to apply KernelSU patch: $patch_file" >&2
+            echo "The kernel source tree is likely left in a partially patched state." >&2
+            echo "Restore it to a clean standard-patched tree (or set BUILD_KERNELSU=false) and retry." >&2
+            exit 1
+        fi
+    done < <(patch_series_files kernelsu "$series_dir")
+
+    echo "KernelSU integration applied."
 }
 
 ensure_source_tree() {
@@ -104,8 +225,7 @@ ensure_source_tree() {
 
     # Shared base resolution and patch selection (KERNEL_PATCH_DIR, overrides,
     # XanMod-only patches). Sourced after the repository is guaranteed present.
-    # shellcheck source=../ci/lib/select_base.sh
-    . "$GAOKUN_DIR/scripts/ci/lib/select_base.sh"
+    load_patch_helpers
     resolve_kernel_base
 
     if [[ "$KERNEL_BASE" == "xanmod" ]]; then
@@ -203,6 +323,11 @@ build_kernel() {
                 ;;
         esac
 
+        # Applied after the EL2 patches so KernelSU lands on top of the EL2
+        # changes, while leaving the "Apply EL2 patches" commit as the tree's
+        # top commit (see apply_kernelsu for why KernelSU is not committed).
+        apply_kernelsu
+
         mkdir -p "$out_dir"
         make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" gaokun3_defconfig
         "$KERN_SRC"/scripts/config --file "$out_dir/.config" --set-str LOCALVERSION "-gaokun3-el2"
@@ -225,6 +350,11 @@ build_kernel() {
                 exit 1
                 ;;
         esac
+
+        # Applied after the EL2 revert: that reset discards any working-tree
+        # KernelSU changes, so a fresh standard config needs KernelSU applied
+        # again (see apply_kernelsu for why KernelSU is never committed).
+        apply_kernelsu
 
         mkdir -p "$out_dir"
         make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" gaokun3_defconfig

@@ -92,6 +92,9 @@ git am $GAOKUN_DIR/patches/others/*.patch
 git am $GAOKUN_DIR/patches/media/*.patch
 git am $GAOKUN_DIR/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch
 
+# 可选但默认启用：在生成内核配置前应用 KernelSU
+git apply $GAOKUN_DIR/patches/kernelsu/*.patch
+
 mkdir -p $KERN_OUT
 ccache -z
 
@@ -107,7 +110,7 @@ KREL_EL2=""
 ccache -s
 ```
 
-如果你需要 EL2，建议先把标准内核安装到 rootfs，或者先单独备份好 `Image`、`dtb`、`modules` 产物，然后在同一套源码上继续构建带 `-gaokun3-el2` 后缀的内核，EL2 产物单独放到另一个输出目录：
+如果你需要 EL2，建议先把标准内核安装到 rootfs，或者先单独备份好 `Image`、`dtb`、`modules` 产物，然后在同一套源码上继续构建带 `-gaokun3-el2` 后缀的内核，EL2 产物单独放到另一个输出目录。由于 KernelSU 的改动仍未提交、留在工作区中，因此 EL2 内核同样会包含 KernelSU：
 
 ```bash
 rm -rf $KERN_OUT_EL2
@@ -125,6 +128,8 @@ KREL_EL2=$(cat $KERN_OUT_EL2/include/config/kernel.release)
 echo $KREL_EL2
 ccache -s
 ```
+
+> **KernelSU 与 EL2 构建。** KernelSU 改动通过 `git apply` 应用，因此不会产生提交。上面的 EL2 步骤只把 EL2 补丁提交为一个临时的 `Apply EL2 patches` 提交，未提交的 KernelSU 改动仍然保留，所以 EL2 内核同样包含 KernelSU。若不想启用 KernelSU，请跳过上面的 `git apply $GAOKUN_DIR/patches/kernelsu/*.patch` 一行。
 
 ---
 
