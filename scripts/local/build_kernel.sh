@@ -257,6 +257,44 @@ kernelsu_driver_link() {
     printf '%s\n' "$KERN_SRC/drivers/kernelsu"
 }
 
+# The relative symlink target wire_kernelsu writes for the pinned clone.
+# realpath -m still computes it once the clone directory is gone, so an
+# unwire on a stale tree can tell KernelSU's link from an unrelated symlink.
+kernelsu_expected_link_target() {
+    realpath -m --relative-to="$KERN_SRC/drivers" "$(kernelsu_clone_dir)/kernel"
+}
+
+# Delete the lines that are exactly $2 from file $1, leaving every other line
+# untouched. An exact whole-line match means an unrelated edit is preserved
+# rather than reverted, unlike `git checkout --`.
+kernelsu_remove_exact_line() {
+    local file="$1" wanted="$2" mode tmp
+    [[ -f "$file" ]] || return 0
+    tmp="$(mktemp)"
+    awk -v skip="$wanted" '$0 != skip' "$file" >"$tmp"
+    if ! cmp -s "$file" "$tmp"; then
+        # Replace the file (new inode) rather than rewriting it in place. A
+        # truncate-and-write can leave the index's cached stat entry looking
+        # "racily clean" when the size is unchanged within the same second, so
+        # a later `git apply --index` would reject the file as not matching the
+        # index. rename(2) always gives a new inode, whose ctime the index
+        # notices. `cp` cannot be used here: GNU cp keeps the inode.
+        mode="$(stat -c '%a' "$file")"
+        chmod "$mode" "$tmp"
+        mv -f "$tmp" "$file"
+    else
+        rm -f "$tmp"
+    fi
+}
+
+# Drop the single trailing blank line wire_kernelsu inserts before its Makefile
+# addition, without touching blank lines elsewhere in the file.
+kernelsu_strip_trailing_blank_line() {
+    local file="$1"
+    [[ -f "$file" ]] || return 0
+    sed -i '${/^$/d;}' "$file"
+}
+
 # True when $2 is a line of the file $1, compared with trailing whitespace
 # stripped.
 kernelsu_file_has_line() {
@@ -373,23 +411,46 @@ apply_kernelsu() {
     wire_kernelsu "$(kernelsu_clone_dir)"
 }
 
-# Remove the KernelSU wiring from the source tree, restoring it to a clean
-# state. The clone under WORKDIR is left in place for reuse. This is needed
-# before the EL2 transition: `git apply --index` (and `git reset --hard`) only
-# touch tracked paths, so the untracked symlink would otherwise be left behind.
+# Remove KernelSU's own wiring from the source tree, leaving every unrelated
+# change intact. The clone under WORKDIR is left in place for reuse. This is
+# needed before the EL2 transition: `git apply --index` (and `git reset --hard`)
+# only touch tracked paths, so the untracked symlink would otherwise be left
+# behind.
 #
 # Unconditional on purpose: a previous run may have left the wiring uncommitted
 # even when this run is not building KernelSU, and that stale wiring would break
 # the staged EL2 apply or a later `gaokun3_defconfig` once the clone is gone.
-# Cleaning it is safe when nothing was wired.
+# It removes only KernelSU's exact lines rather than reverting the two files, so
+# unrelated local edits survive; a symlink that is not KernelSU's is left alone
+# and reported instead of deleted.
 unwire_kernelsu() {
-    local link
+    local link expected_target actual_target
     link="$(kernelsu_driver_link)"
+    expected_target="$(kernelsu_expected_link_target)"
+
     if [[ -L "$link" ]]; then
-        rm -f "$link"
+        actual_target="$(readlink "$link")"
+        if [[ "$actual_target" == "$expected_target" ]]; then
+            rm -f "$link"
+        else
+            echo "ERROR: $link is a symlink to '$actual_target', not the expected KernelSU target '$expected_target'." >&2
+            echo "Refusing to remove it; delete or move it yourself if it is stale." >&2
+            exit 1
+        fi
     fi
 
-    git -C "$KERN_SRC" checkout -- drivers/Makefile drivers/Kconfig 2>/dev/null || true
+    kernelsu_remove_exact_line "$KERN_SRC/drivers/Kconfig" 'source "drivers/kernelsu/Kconfig"'
+    if kernelsu_file_has_line "$KERN_SRC/drivers/Makefile" 'obj-$(CONFIG_KSU) += kernelsu/'; then
+        kernelsu_remove_exact_line "$KERN_SRC/drivers/Makefile" 'obj-$(CONFIG_KSU) += kernelsu/'
+        kernelsu_strip_trailing_blank_line "$KERN_SRC/drivers/Makefile"
+    fi
+
+    # Rewriting the tracked files above does not update the index's cached stat
+    # data, which would make a later `git apply --index` reject them as not
+    # matching the index. Refresh the index so the files match HEAD (only
+    # KernelSU's own lines were removed); `|| true` tolerates files that still
+    # differ from HEAD, which are legitimate local edits the caller keeps.
+    git -C "$KERN_SRC" update-index --refresh >/dev/null 2>&1 || true
 }
 
 # Enable KernelSU's configuration in one variant's generated .config. KSU
