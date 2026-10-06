@@ -129,7 +129,7 @@ KREL_EL2=""
 ccache -s
 ```
 
-If you need EL2, it's recommended to first install the standard kernel to rootfs, or separately backup the `Image`, `dtb`, `modules` outputs, then continue building the kernel with `-gaokun3-el2` suffix on the same source tree, with EL2 outputs in a separate output directory. Remove the KernelSU wiring before the EL2 transition and re-apply it afterwards: `git apply --index` and `git reset --hard` only manage tracked files, so the untracked `drivers/kernelsu` symlink must not be present when they run. The EL2 kernel is then built with KernelSU too:
+If you need EL2, it's recommended to first install the standard kernel to rootfs, or separately backup the `Image`, `dtb`, `modules` outputs, then continue building the kernel with `-gaokun3-el2` suffix on the same source tree, with EL2 outputs in a separate output directory. Remove the KernelSU wiring before the EL2 transition and re-apply it afterwards: `git apply --index` and `git reset --hard` only manage tracked files, so the untracked `drivers/kernelsu` symlink must not be present when they run. The EL2 kernel is then built with KernelSU too; if you skipped the KernelSU block, the rewire step below skips itself:
 
 ```bash
 rm -rf $KERN_OUT_EL2
@@ -141,24 +141,33 @@ git -C $KERN_SRC checkout -- drivers/Makefile drivers/Kconfig
 git -C $KERN_SRC apply --index $GAOKUN_DIR/patches/el2/*.patch
 git -C $KERN_SRC commit -m "Apply EL2 patches"
 
-# Re-wire KernelSU into the EL2 tree. KERNSU_SRC is re-asserted here so this
-# block also works when the earlier KernelSU block was skipped or re-run.
+# Re-wire KernelSU into the EL2 tree. Skip these lines together with the
+# KernelSU block above; when no clone exists there is nothing to wire, and a
+# blind rewire would leave Kbuild/Kconfig pointing at a missing directory.
 KERNSU_SRC=${KERNSU_SRC:-$WORKDIR/kernelsu-src}
-ln -sfn $(realpath --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel) $KERN_SRC/drivers/kernelsu
-grep -qxF 'obj-$(CONFIG_KSU) += kernelsu/' $KERN_SRC/drivers/Makefile || \
-    echo 'obj-$(CONFIG_KSU) += kernelsu/' >> $KERN_SRC/drivers/Makefile
-grep -qxF 'source "drivers/kernelsu/Kconfig"' $KERN_SRC/drivers/Kconfig || \
-    sed -i "$(grep -n '^endmenu' $KERN_SRC/drivers/Kconfig | tail -n1 | cut -d: -f1)i\\
+if [[ -d $KERNSU_SRC/kernel ]]; then
+    ln -sfn $(realpath --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel) $KERN_SRC/drivers/kernelsu
+    grep -qxF 'obj-$(CONFIG_KSU) += kernelsu/' $KERN_SRC/drivers/Makefile || \
+        echo 'obj-$(CONFIG_KSU) += kernelsu/' >> $KERN_SRC/drivers/Makefile
+    grep -qxF 'source "drivers/kernelsu/Kconfig"' $KERN_SRC/drivers/Kconfig || \
+        sed -i "$(grep -n '^endmenu' $KERN_SRC/drivers/Kconfig | tail -n1 | cut -d: -f1)i\\
 source \"drivers/kernelsu/Kconfig\"" $KERN_SRC/drivers/Kconfig
+else
+    echo "Skipping the KernelSU rewire: no clone at $KERNSU_SRC."
+fi
 ccache -z
 
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 gaokun3_defconfig
 $KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --set-str LOCALVERSION "-gaokun3-el2"
-$KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable KPROBES
-$KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable FTRACE
-$KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable KSU
+if [[ -d $KERN_SRC/drivers/kernelsu ]]; then
+    $KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable KPROBES
+    $KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable FTRACE
+    $KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable KSU
+fi
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 olddefconfig
-grep -qx 'CONFIG_KSU=y' $KERN_OUT_EL2/.config || { echo "KernelSU not enabled"; exit 1; }
+if [[ -d $KERN_SRC/drivers/kernelsu ]]; then
+    grep -qx 'CONFIG_KSU=y' $KERN_OUT_EL2/.config || { echo "KernelSU not enabled"; exit 1; }
+fi
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 -j$(nproc)
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 modules_prepare
 
@@ -167,7 +176,7 @@ echo $KREL_EL2
 ccache -s
 ```
 
-> **KernelSU and the EL2 build.** KernelSU is wired into the tree rather than committed as a patch, so `git apply --index` and `git reset --hard` do not manage it. Unwire it before the EL2 transition and re-wire it after, as shown above. Both the standard and the EL2 kernel then contain KernelSU with unchanged release names (`<version>-gaokun3` and `<version>-gaokun3-el2`). To build without KernelSU, skip the KernelSU block entirely.
+> **KernelSU and the EL2 build.** KernelSU is wired into the tree rather than committed as a patch, so `git apply --index` and `git reset --hard` do not manage it. Unwire it before the EL2 transition and re-wire it after, as shown above. Both the standard and the EL2 kernel then contain KernelSU with unchanged release names (`<version>-gaokun3` and `<version>-gaokun3-el2`). To build without KernelSU, skip the KernelSU block entirely; the EL2 rewire above checks for the clone and skips itself on that path, so no dangling symlink or Kbuild/Kconfig line is left behind.
 
 > The interactive helper `scripts/local/build_kernel.sh` automates all of the above (KernelSU wiring, the EL2 transition, and the per-variant `.config` symbols). See the repository `README.md` for its `BUILD_KERNELSU` / `EL2_CHOICE` overrides.
 

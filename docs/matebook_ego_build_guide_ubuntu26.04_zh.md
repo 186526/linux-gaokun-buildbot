@@ -128,7 +128,7 @@ KREL_EL2=""
 ccache -s
 ```
 
-如果你需要 EL2，建议先把标准内核安装到 rootfs，或者先单独备份好 `Image`、`dtb`、`modules` 产物，然后在同一套源码上继续构建带 `-gaokun3-el2` 后缀的内核，EL2 产物单独放到另一个输出目录。切换 EL2 前要先移除 KernelSU 接线、切换完成后再接回：`git apply --index` 与 `git reset --hard` 只管理已跟踪文件，未跟踪的 `drivers/kernelsu` 符号链接必须在这两步执行前移除。这样 EL2 内核同样会包含 KernelSU：
+如果你需要 EL2，建议先把标准内核安装到 rootfs，或者先单独备份好 `Image`、`dtb`、`modules` 产物，然后在同一套源码上继续构建带 `-gaokun3-el2` 后缀的内核，EL2 产物单独放到另一个输出目录。切换 EL2 前要先移除 KernelSU 接线、切换完成后再接回：`git apply --index` 与 `git reset --hard` 只管理已跟踪文件，未跟踪的 `drivers/kernelsu` 符号链接必须在这两步执行前移除。这样 EL2 内核同样会包含 KernelSU；若跳过了 KernelSU 段落，下面的重接线步骤会自动跳过：
 
 ```bash
 rm -rf $KERN_OUT_EL2
@@ -140,24 +140,32 @@ git -C $KERN_SRC checkout -- drivers/Makefile drivers/Kconfig
 git -C $KERN_SRC apply --index $GAOKUN_DIR/patches/el2/*.patch
 git -C $KERN_SRC commit -m "Apply EL2 patches"
 
-# 重新把 KernelSU 接入 EL2 源码树。此处重新赋值 KERNSU_SRC，
-# 以便跳过前面的 KernelSU 段落单独执行本段时也可用。
+# 重新把 KernelSU 接入 EL2 源码树。本段要与上面的 KernelSU 段落一起跳过：
+# 没有 clone 时无需接线，盲目重接线会让 Kbuild/Kconfig 指向不存在的目录。
 KERNSU_SRC=${KERNSU_SRC:-$WORKDIR/kernelsu-src}
-ln -sfn $(realpath --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel) $KERN_SRC/drivers/kernelsu
-grep -qxF 'obj-$(CONFIG_KSU) += kernelsu/' $KERN_SRC/drivers/Makefile || \
-    echo 'obj-$(CONFIG_KSU) += kernelsu/' >> $KERN_SRC/drivers/Makefile
-grep -qxF 'source "drivers/kernelsu/Kconfig"' $KERN_SRC/drivers/Kconfig || \
-    sed -i "$(grep -n '^endmenu' $KERN_SRC/drivers/Kconfig | tail -n1 | cut -d: -f1)i\\
+if [[ -d $KERNSU_SRC/kernel ]]; then
+    ln -sfn $(realpath --relative-to=$KERN_SRC/drivers $KERNSU_SRC/kernel) $KERN_SRC/drivers/kernelsu
+    grep -qxF 'obj-$(CONFIG_KSU) += kernelsu/' $KERN_SRC/drivers/Makefile || \
+        echo 'obj-$(CONFIG_KSU) += kernelsu/' >> $KERN_SRC/drivers/Makefile
+    grep -qxF 'source "drivers/kernelsu/Kconfig"' $KERN_SRC/drivers/Kconfig || \
+        sed -i "$(grep -n '^endmenu' $KERN_SRC/drivers/Kconfig | tail -n1 | cut -d: -f1)i\\
 source \"drivers/kernelsu/Kconfig\"" $KERN_SRC/drivers/Kconfig
+else
+    echo "跳过 KernelSU 接线：未找到 $KERNSU_SRC。"
+fi
 ccache -z
 
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 gaokun3_defconfig
 $KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --set-str LOCALVERSION "-gaokun3-el2"
-$KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable KPROBES
-$KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable FTRACE
-$KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable KSU
+if [[ -d $KERN_SRC/drivers/kernelsu ]]; then
+    $KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable KPROBES
+    $KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable FTRACE
+    $KERN_SRC/scripts/config --file $KERN_OUT_EL2/.config --enable KSU
+fi
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 olddefconfig
-grep -qx 'CONFIG_KSU=y' $KERN_OUT_EL2/.config || { echo "KernelSU 未启用"; exit 1; }
+if [[ -d $KERN_SRC/drivers/kernelsu ]]; then
+    grep -qx 'CONFIG_KSU=y' $KERN_OUT_EL2/.config || { echo "KernelSU 未启用"; exit 1; }
+fi
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 -j$(nproc)
 make -C $KERN_SRC O=$KERN_OUT_EL2 ARCH=arm64 modules_prepare
 
@@ -166,7 +174,7 @@ echo $KREL_EL2
 ccache -s
 ```
 
-> **KernelSU 与 EL2 构建。** KernelSU 以接线方式接入源码树、而不是作为补丁提交，因此 `git apply --index` 与 `git reset --hard` 不会管理它。请按上面的步骤在切换 EL2 前移除接线、切换后再接回。这样标准与 EL2 内核都会包含 KernelSU，且内核 release 名保持不变（`<版本>-gaokun3` 与 `<版本>-gaokun3-el2`）。若不想启用 KernelSU，请整段跳过 KernelSU 相关内容。
+> **KernelSU 与 EL2 构建。** KernelSU 以接线方式接入源码树、而不是作为补丁提交，因此 `git apply --index` 与 `git reset --hard` 不会管理它。请按上面的步骤在切换 EL2 前移除接线、切换后再接回。这样标准与 EL2 内核都会包含 KernelSU，且内核 release 名保持不变（`<版本>-gaokun3` 与 `<版本>-gaokun3-el2`）。若不想启用 KernelSU，请整段跳过 KernelSU 相关内容；上面的 EL2 重接线块会先检查 clone 是否存在，在该路径下自动跳过，不会留下悬空符号链接或 Kbuild/Kconfig 行。
 
 > 交互式脚本 `scripts/local/build_kernel.sh` 已自动完成上述步骤（KernelSU 接入、EL2 切换、各变体 `.config` 选项）。其 `BUILD_KERNELSU` / `EL2_CHOICE` 覆盖变量见仓库 `README.md`。
 

@@ -67,7 +67,10 @@ prompt_answer() {
     fi
 }
 
-# Normalise a boolean-ish value to true/false; aborts on an unrecognised value.
+# Normalise a boolean-ish value to true/false; prints the error and returns
+# non-zero on an unrecognised value. It must not exit on its own: most callers
+# read the result through a command substitution, where an exit would only end
+# the subshell and let the caller carry on with an empty value.
 normalize_bool() {
     local value="$1" name="$2"
     case "${value,,}" in
@@ -75,9 +78,19 @@ normalize_bool() {
         0|false|no|n|off|"") printf 'false\n' ;;
         *)
             echo "Invalid $name value: $value (expected true or false). Exiting." >&2
-            exit 1
+            return 1
             ;;
     esac
+}
+
+# Read a boolean-ish value for a caller that consumes it inside a command
+# substitution. The caller must invoke this as `var="$(require_bool ...)"`:
+# `exit` inside the substitution still only ends the subshell, so the caller
+# appends `|| exit 1` at the assignment to propagate a failure (see the call
+# sites below).
+require_bool() {
+    local value="$1" name="$2"
+    normalize_bool "$value" "$name" || return 1
 }
 
 if [[ -f /etc/os-release ]]; then
@@ -97,7 +110,8 @@ fi
 # The INSTALL_DEPS override must be mapped before the toolchain prompt below.
 install_deps=""
 if [[ -n "$INSTALL_DEPS" ]]; then
-    [[ "$(normalize_bool "$INSTALL_DEPS" INSTALL_DEPS)" == "true" ]] && install_deps="yes" || install_deps="no"
+    install_deps_bool="$(require_bool "$INSTALL_DEPS" INSTALL_DEPS)" || exit 1
+    [[ "$install_deps_bool" == "true" ]] && install_deps="yes" || install_deps="no"
 fi
 
 prompt_answer install_deps "Install necessary minimal kernel build toolchain? [y/N] [default: n]: " no
@@ -133,11 +147,14 @@ fi
 # interactive prompt and its "n" default are preserved when neither is set.
 if [[ -n "$EL2_CHOICE" ]]; then
     el2_choice="$EL2_CHOICE"
-elif [[ "$(normalize_bool "${BUILD_EL2:-false}" BUILD_EL2)" == "true" ]]; then
-    el2_choice="both"
 else
-    prompt_answer el2_choice "Build EL2 kernel? (Y: only EL2, n: only standard, both: build both) [default: n]: " n '^(both|el2|std|standard)$'
-    el2_choice="$el2_choice"
+    build_el2="$(require_bool "${BUILD_EL2:-false}" BUILD_EL2)" || exit 1
+    if [[ "$build_el2" == "true" ]]; then
+        el2_choice="both"
+    else
+        prompt_answer el2_choice "Build EL2 kernel? (Y: only EL2, n: only standard, both: build both) [default: n]: " n '^(both|el2|std|standard)$'
+        el2_choice="$el2_choice"
+    fi
 fi
 case "${el2_choice,,}" in
     both) el2_choice="both" ;;
@@ -153,22 +170,27 @@ esac
 if [[ -z "$BUILD_KERNELSU" ]]; then
     prompt_answer BUILD_KERNELSU "Build KernelSU into the kernel? [Y/n] [default: Y]: " yes
 fi
-BUILD_KERNELSU="$(normalize_bool "$BUILD_KERNELSU" BUILD_KERNELSU)"
+BUILD_KERNELSU="$(require_bool "$BUILD_KERNELSU" BUILD_KERNELSU)" || exit 1
 echo "KernelSU build: $BUILD_KERNELSU"
 
 # Map the boolean non-interactive overrides onto the internal answer variables.
-# An unset override leaves the variable empty, so the prompt still runs.
+# An unset override leaves the variable empty, so the prompt still runs. The
+# `|| exit 1` sits on the assignment, not inside the substitution, so an
+# invalid value ends the script instead of just the subshell.
 pull_answer=""
 mirror_choice=""
 install_kernel_answer=""
 if [[ -n "$PULL_KERNEL" ]]; then
-    [[ "$(normalize_bool "$PULL_KERNEL" PULL_KERNEL)" == "true" ]] && pull_answer="yes" || pull_answer="no"
+    pull_answer="$(require_bool "$PULL_KERNEL" PULL_KERNEL)" || exit 1
+    [[ "$pull_answer" == "true" ]] && pull_answer="yes" || pull_answer="no"
 fi
 if [[ -n "$USE_MIRROR" ]]; then
-    [[ "$(normalize_bool "$USE_MIRROR" USE_MIRROR)" == "true" ]] && mirror_choice="yes" || mirror_choice="no"
+    mirror_choice="$(require_bool "$USE_MIRROR" USE_MIRROR)" || exit 1
+    [[ "$mirror_choice" == "true" ]] && mirror_choice="yes" || mirror_choice="no"
 fi
 if [[ -n "$INSTALL_KERNEL" ]]; then
-    [[ "$(normalize_bool "$INSTALL_KERNEL" INSTALL_KERNEL)" == "true" ]] && install_kernel_answer="yes" || install_kernel_answer="no"
+    install_kernel_answer="$(require_bool "$INSTALL_KERNEL" INSTALL_KERNEL)" || exit 1
+    [[ "$install_kernel_answer" == "true" ]] && install_kernel_answer="yes" || install_kernel_answer="no"
 fi
 
 configure_git_identity() {
