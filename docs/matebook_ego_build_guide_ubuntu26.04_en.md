@@ -177,9 +177,9 @@ If you need EL2, it's recommended to first install the standard kernel to rootfs
 rm -rf $KERN_OUT_EL2
 
 # Unwire KernelSU so the staged EL2 apply sees a clean tracked tree. Reuse the
-# same safe unwire defined in the KernelSU block above (skip path included);
-# define it here too if the EL2 step runs in a fresh shell. It removes only
-# KernelSU's own wiring and keeps unrelated edits.
+# same safe unwire defined in the KernelSU block above (which runs on its
+# BUILD_KERNELSU=false path too); define it here if the EL2 step runs in a
+# fresh shell. It removes only KernelSU's own wiring and keeps unrelated edits.
 KERNSU_SRC=${KERNSU_SRC:-$WORKDIR/kernelsu-src}
 if ! declare -F unwire_kernelsu >/dev/null; then
     unwire_kernelsu() {
@@ -244,7 +244,7 @@ echo $KREL_EL2
 ccache -s
 ```
 
-> **KernelSU and the EL2 build.** KernelSU is wired into the tree rather than committed as a patch, so `git apply --index` and `git reset --hard` do not manage it. Unwire it before the EL2 transition and re-wire it after, as shown above. Both the standard and the EL2 kernel then contain KernelSU with unchanged release names (`<version>-gaokun3` and `<version>-gaokun3-el2`). Whether KernelSU is built is controlled by the single `BUILD_KERNELSU` flag set in the KernelSU block; both the standard and the EL2 wiring, `.config` enables, and the `CONFIG_KSU=y` assertion are gated on it, so setting `BUILD_KERNELSU=false` turns KernelSU off for both variants. When it is false (or the block is skipped) both variants first run the safe unwire, so wiring left by an earlier run is removed while unrelated edits are preserved and a foreign `drivers/kernelsu` symlink aborts instead of being deleted. This mirrors the helper's `BUILD_KERNELSU` semantics in `scripts/local/build_kernel.sh`. The flag is set and exported by the KernelSU block; if you run the EL2 block in a separate shell, export `BUILD_KERNELSU=true` there too, otherwise it defaults to false and skips KernelSU.
+> **KernelSU and the EL2 build.** KernelSU is wired into the tree rather than committed as a patch, so `git apply --index` and `git reset --hard` do not manage it. Unwire it before the EL2 transition and re-wire it after, as shown above. Both the standard and the EL2 kernel then contain KernelSU with unchanged release names (`<version>-gaokun3` and `<version>-gaokun3-el2`). Whether KernelSU is built is controlled by the single `BUILD_KERNELSU` flag set in the KernelSU block; both the standard and the EL2 wiring, `.config` enables, and the `CONFIG_KSU=y` assertion are gated on it, so setting `BUILD_KERNELSU=false` turns KernelSU off for both variants and removes any wiring an earlier run left behind, while unrelated edits are preserved and a foreign `drivers/kernelsu` symlink aborts instead of being deleted. This cleanup is defined and called by the KernelSU block, so to get it you must keep the block and set `BUILD_KERNELSU=false` rather than deleting the block. If you delete the whole block, the standard build never cleans up; only do that when the tree has no stale wiring, or remove the symlink and the two Kbuild/Kconfig lines yourself first. This mirrors the helper's `BUILD_KERNELSU` semantics in `scripts/local/build_kernel.sh`. The flag is set and exported by the KernelSU block; if you run the EL2 block in a separate shell, export `BUILD_KERNELSU=true` there too, otherwise it defaults to false and skips KernelSU.
 
 > The interactive helper `scripts/local/build_kernel.sh` automates all of the above (KernelSU wiring, the EL2 transition, and the per-variant `.config` symbols). See the repository `README.md` for its `BUILD_KERNELSU` / `EL2_CHOICE` overrides.
 

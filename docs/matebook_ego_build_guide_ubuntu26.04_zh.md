@@ -174,8 +174,9 @@ ccache -s
 rm -rf $KERN_OUT_EL2
 
 # 先移除 KernelSU 接线，保证 staged apply 面对的是干净的已跟踪树。复用上面
-# KernelSU 段落里定义的同一个安全 unwire（跳过路径也复用）；若 EL2 步骤在全新
-# shell 中执行，则在此补上定义。它只删除 KernelSU 自己写入的内容，保留无关改动。
+# KernelSU 段落里定义的同一个安全 unwire（该段在 BUILD_KERNELSU=false 分支也会
+# 调用它）；若 EL2 步骤在全新 shell 中执行，则在此补上定义。它只删除 KernelSU
+# 自己写入的内容，保留无关改动。
 KERNSU_SRC=${KERNSU_SRC:-$WORKDIR/kernelsu-src}
 if ! declare -F unwire_kernelsu >/dev/null; then
     unwire_kernelsu() {
@@ -239,7 +240,7 @@ echo $KREL_EL2
 ccache -s
 ```
 
-> **KernelSU 与 EL2 构建。** KernelSU 以接线方式接入源码树、而不是作为补丁提交，因此 `git apply --index` 与 `git reset --hard` 不会管理它。请按上面的步骤在切换 EL2 前移除接线、切换后再接回。这样标准与 EL2 内核都会包含 KernelSU，且内核 release 名保持不变（`<版本>-gaokun3` 与 `<版本>-gaokun3-el2`）。是否构建 KernelSU 由 KernelSU 段落中设置的单一 `BUILD_KERNELSU` 标志控制；标准与 EL2 的接线、`.config` 选项与 `CONFIG_KSU=y` 断言都以它为准，因此设为 `BUILD_KERNELSU=false` 会对两个变体都关闭 KernelSU。为 false（或跳过该段落）时，两个变体都会先执行安全 unwire，清理上次运行留下的接线，同时保留无关改动；若 `drivers/kernelsu` 是外来符号链接则报错退出、不删除。这与 `scripts/local/build_kernel.sh` 的 `BUILD_KERNELSU` 语义一致。该标志由 KernelSU 段落设置并导出；若在另一个 shell 里执行 EL2 段落，请同样导出 `BUILD_KERNELSU=true`，否则它默认 false 并跳过 KernelSU。
+> **KernelSU 与 EL2 构建。** KernelSU 以接线方式接入源码树、而不是作为补丁提交，因此 `git apply --index` 与 `git reset --hard` 不会管理它。请按上面的步骤在切换 EL2 前移除接线、切换后再接回。这样标准与 EL2 内核都会包含 KernelSU，且内核 release 名保持不变（`<版本>-gaokun3` 与 `<版本>-gaokun3-el2`）。是否构建 KernelSU 由 KernelSU 段落中设置的单一 `BUILD_KERNELSU` 标志控制；标准与 EL2 的接线、`.config` 选项与 `CONFIG_KSU=y` 断言都以它为准，因此设为 `BUILD_KERNELSU=false` 会对两个变体都关闭 KernelSU，并清理上次运行留下的接线，同时保留无关改动；若 `drivers/kernelsu` 是外来符号链接则报错退出、不删除。这段清理由 KernelSU 段落定义并调用，要获得该行为必须保留本段并设 `BUILD_KERNELSU=false`，而不是删除整段。若删除了整段，标准构建不会做任何清理；仅在源码树没有残留接线时才这样做，或先自行删除该符号链接与两行 Kbuild/Kconfig。这与 `scripts/local/build_kernel.sh` 的 `BUILD_KERNELSU` 语义一致。该标志由 KernelSU 段落设置并导出；若在另一个 shell 里执行 EL2 段落，请同样导出 `BUILD_KERNELSU=true`，否则它默认 false 并跳过 KernelSU。
 
 > 交互式脚本 `scripts/local/build_kernel.sh` 已自动完成上述步骤（KernelSU 接入、EL2 切换、各变体 `.config` 选项）。其 `BUILD_KERNELSU` / `EL2_CHOICE` 覆盖变量见仓库 `README.md`。
 
