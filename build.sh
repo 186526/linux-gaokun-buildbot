@@ -2,8 +2,17 @@
 set -euo pipefail
 
 GAOKUN_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# A caller-provided KERNEL_TAG (for example the real XanMod tag) is the naming
+# label the packages and manifest must carry, so it has to survive sourcing
+# build.env, whose KERNEL_TAG is only the local-build default. Without this the
+# local manifest would label a XanMod build "gaokun3", the same mismatch the CI
+# package workflow used to produce.
+requested_kernel_tag="${KERNEL_TAG:-}"
 # shellcheck source=build.env
 . "$GAOKUN_DIR/build.env"
+if [[ -n "$requested_kernel_tag" ]]; then
+  KERNEL_TAG="$requested_kernel_tag"
+fi
 # shellcheck source=scripts/lib/kernel_source.sh
 . "$GAOKUN_DIR/scripts/lib/kernel_source.sh"
 
