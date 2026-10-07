@@ -142,10 +142,14 @@ apply_el2_series() {
 mkdir -p "$WORKDIR"
 
 configure_git_identity "$KERN_SRC"
-apply_series upstream "$GAOKUN_DIR"/patches/upstream
-apply_series others "$GAOKUN_DIR"/patches/others
-apply_series media "$GAOKUN_DIR"/patches/media
-apply_patch "$(patch_resolution_for . "$GAOKUN_DIR/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch")"
+if [[ "$KERNEL_BASE" == "xanmod" ]]; then
+  apply_series upstream "$GAOKUN_DIR"/patches/upstream
+  apply_series others "$GAOKUN_DIR"/patches/others
+  apply_series media "$GAOKUN_DIR"/patches/media
+  apply_patch "$(patch_resolution_for . "$GAOKUN_DIR/patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch")"
+else
+  test -f "$KERN_SRC/arch/arm64/configs/gaokun3_defconfig"
+fi
 
 # Wire the pinned KernelSU into the patched source tree before the variant is
 # configured. Both the standard and the EL2 variant below are built from this

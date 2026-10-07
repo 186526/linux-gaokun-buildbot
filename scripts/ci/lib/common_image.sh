@@ -90,6 +90,22 @@ install_common_image_assets() {
   done
 }
 
+# The Adreno GPU firmware belongs to the distribution's own firmware package,
+# not to linux-firmware-gaokun3, and not every distribution release carries it:
+# Debian Trixie has no a660_gmu.bin. A missing source file therefore downgrades
+# this copy to a warning, while the repository-owned firmware above stays fatal.
+install_distro_firmware() {
+  local src="$1"
+  local dest="$2"
+
+  if [[ ! -f "$src" ]]; then
+    echo "skipping distribution firmware $src: not installed in the rootfs" >&2
+    return 0
+  fi
+
+  sudo install -Dm644 "$src" "$dest"
+}
+
 install_el2_efi_payloads() {
   local rootfs_dir="$1"
   local gaokun_dir="$2"
@@ -110,9 +126,9 @@ install_el2_efi_payloads() {
     "$rootfs_dir/boot/efi/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qccdsp8280.mbn"
   sudo install -Dm644 "$rootfs_dir/lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcslpi8280.mbn" \
     "$rootfs_dir/boot/efi/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcslpi8280.mbn"
-  sudo install -Dm644 "$rootfs_dir/lib/firmware/qcom/a660_gmu.bin" \
+  install_distro_firmware "$rootfs_dir/lib/firmware/qcom/a660_gmu.bin" \
     "$rootfs_dir/boot/efi/firmware/qcom/a660_gmu.bin"
-  sudo install -Dm644 "$rootfs_dir/lib/firmware/qcom/a660_sqe.fw" \
+  install_distro_firmware "$rootfs_dir/lib/firmware/qcom/a660_sqe.fw" \
     "$rootfs_dir/boot/efi/firmware/qcom/a660_sqe.fw"
   sudo install -Dm644 "$rootfs_dir/lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcdxkmsuc8280.mbn" \
     "$rootfs_dir/boot/efi/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcdxkmsuc8280.mbn"
