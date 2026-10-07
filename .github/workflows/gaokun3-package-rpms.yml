@@ -81,9 +81,10 @@ jobs:
       WORKDIR: ${{ github.workspace }}/build-packages
       KERN_SRC: ${{ github.workspace }}/build-packages/kernel-src
       KERN_SRC_BASE: ${{ github.workspace }}/build-packages/kernel-src-base
+      KERN_SRC_EL2: ${{ github.workspace }}/build-packages/kernel-src
       KERN_OUT: ${{ github.workspace }}/build-packages/kernel-out
       KERN_OUT_EL2: ${{ github.workspace }}/build-packages/kernel-out-el2
-      EL2_SRC: ${{ github.workspace }}/build-packages/linux-el2
+      KERNEL_XANMOD_TAG: "7.2.9-xanmod1"
       ARTIFACT_DIR: ${{ github.workspace }}/build-packages/artifacts
 
     steps:
@@ -95,35 +96,37 @@ jobs:
           set -euo pipefail
           . ./build.env
           echo "BUILDBOT_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-          if [[ "$BUILD_EL2" == true && -z "$KERNEL_EL2_COMMIT" ]]; then
-            echo 'EL2 migration is not ready: KERNEL_EL2_COMMIT is unset.' >&2
-            exit 1
-          fi
           for name in KERNEL_REPOSITORY KERNEL_TAG KERNEL_COMMIT KERNEL_EL2_COMMIT FEDORA_RELEASE UBUNTU_RELEASE; do
             printf '%s=%s\n' "$name" "${!name}" >> "$GITHUB_ENV"
           done
 
-      - name: Checkout Linux source
+      - name: Prepare Linux source
         run: |
           set -euxo pipefail
-          # KERNEL_TAG names the artifacts only; the reviewed KERNEL_COMMIT in
-          # build.env is the commit fetched from KERNEL_REPOSITORY.
+          # mainline uses the reviewed KERNEL_COMMIT pinned in build.env. XanMod
+          # is a gitlab.com tree that the github-only helper cannot fetch, so it
+          # is cloned by its real tag (KERNEL_XANMOD_TAG) and the resolved commit
+          # is recorded for the manifest. KERNEL_TAG stays the naming label.
+          # The xanmod tree is intentionally not checked for gaokun3_defconfig:
+          # that file is created by patches/0099, which 20_build_kernel_variants.sh
+          # applies later, so it is absent from the freshly cloned tag.
           # shellcheck source=scripts/lib/kernel_source.sh
           . ./scripts/lib/kernel_source.sh
-          prepare_kernel_source "$KERN_SRC" "$KERNEL_COMMIT"
-
-      - name: Checkout EL2 Linux source
-        if: env.BUILD_EL2 == 'true'
-        uses: actions/checkout@v6
-        with:
-          repository: ${{ env.KERNEL_REPOSITORY }}
-          ref: ${{ env.KERNEL_EL2_COMMIT }}
-          fetch-depth: 1
-          path: build-packages/linux-el2
-
-      - name: Pin the EL2 source path
-        if: env.BUILD_EL2 == 'true'
-        run: echo "KERN_SRC_EL2=$EL2_SRC" >> "$GITHUB_ENV"
+          if [[ "${KERNEL_BASE:-mainline}" == "xanmod" ]]; then
+            if [[ -d "$KERN_SRC" ]]; then
+              echo "KERN_SRC $KERN_SRC already exists; refusing to re-clone" >&2
+              exit 1
+            fi
+            mkdir -p "$KERN_SRC"
+            git -C "$KERN_SRC" init -q
+            git -C "$KERN_SRC" remote add origin "https://gitlab.com/xanmod/linux.git"
+            git -C "$KERN_SRC" fetch --depth=1 origin "$KERNEL_XANMOD_TAG"
+            git -C "$KERN_SRC" checkout --detach FETCH_HEAD
+            KERNEL_COMMIT="$(git -C "$KERN_SRC" rev-parse HEAD)"
+            echo "KERNEL_COMMIT=$KERNEL_COMMIT" >> "$GITHUB_ENV"
+          else
+            prepare_kernel_source "$KERN_SRC" "$KERNEL_COMMIT"
+          fi
 
       - name: Install host dependencies
         run: |
