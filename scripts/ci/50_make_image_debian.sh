@@ -106,7 +106,6 @@ SystemAccount=true
 EOF
 
 install -d -m 0755 /home/user/.config
-install -Dm644 /usr/local/share/gaokun/monitors.xml /home/user/.config/monitors.xml
 chown -R user:user /home/user
 
 install -d -m 1777 -o root -g root /tmp/.X11-unix
@@ -126,7 +125,7 @@ WantedBy=graphical.target
 EOF
 
 systemctl enable gdm NetworkManager ssh \
-  gaokun-fix-x11-unix.service gdm-monitor-sync.service \
+  gaokun-fix-x11-unix.service \
   patch-nvm-bdaddr.service || true
 
 cat >> /etc/initramfs-tools/modules <<'MODEOF'
@@ -141,7 +140,6 @@ uas
 typec
 # WiFi
 pci-pwrctrl-pwrseq
-michael_mic
 ath11k
 ath11k_pci
 # Bluetooth and filesystem support
@@ -185,6 +183,14 @@ cat > /etc/kernel/install.conf <<'EOF'
 layout=bls
 EOF
 
+# The --entry-token=os-id below only governs the calls made here. Recording it
+# makes it survive: the systemd-boot hook Debian runs from update-initramfs calls
+# kernel-install without an --entry-token, so without this file it would resolve
+# "auto" against the machine id and write a second set of entries under a name
+# loader.conf does not point at. The DEB postinst derives the same token from
+# /etc/os-release.
+printf '%s\n' 'debian' > /etc/kernel/entry-token
+
 cat > /etc/kernel/cmdline <<EOF
 root=UUID=$ROOT_UUID rootflags=subvol=@ clk_ignore_unused pd_ignore_unused arm64.nopauth iommu.passthrough=0 iommu.strict=0 pcie_aspm.policy=powersupersave modprobe.blacklist=simpledrm efi=noruntime usbhid.quirks=0x12d1:0x10b8:0x20000000 consoleblank=0 loglevel=4 psi=1
 EOF
@@ -208,7 +214,6 @@ fi
 
 rm -f /etc/machine-id
 systemd-machine-id-setup
-MACHINE_ID="$(cat /etc/machine-id)"
 
 bootctl --no-variables --esp-path=/boot/efi install
 
@@ -227,9 +232,9 @@ EOF
   printf '%s\n' "$cmdline" > "$conf_root/cmdline"
   printf 'qcom/%s\n' "$dtb" > "$conf_root/devicetree"
 
-  kernel-install --entry-token=machine-id remove "$krel" || true
+  kernel-install --entry-token=os-id remove "$krel" || true
   KERNEL_INSTALL_CONF_ROOT="$conf_root" \
-    kernel-install --verbose --make-entry-directory=yes --entry-token=machine-id add \
+    kernel-install --verbose --make-entry-directory=yes --entry-token=os-id add \
     "$krel" "$image" "$initrd"
   rm -rf "$conf_root"
 }
@@ -253,7 +258,7 @@ if [[ "$BUILD_EL2" == "true" && -n "$KREL_EL2" ]]; then
 fi
 
 cat > /boot/efi/loader/loader.conf <<EOF
-default ${MACHINE_ID}-${KREL}.conf
+default debian-${KREL}.conf
 timeout 5
 console-mode keep
 editor no

@@ -227,8 +227,16 @@ build_firmware_package() {
   local firmware_deb="linux-firmware-gaokun3_${FIRMWARE_DEB_VERSION}_all.deb"
 
   rm -rf "$firmware_stage"
-  mkdir -p "$firmware_stage/lib/firmware" "$firmware_stage/etc/initramfs-tools/hooks"
-  cp -a "$GAOKUN_DIR/firmware/." "$firmware_stage/lib/firmware/"
+  mkdir -p "$firmware_stage/lib/firmware/qcom/sc8280xp" \
+    "$firmware_stage/etc/initramfs-tools/hooks"
+  # The generic WCN6855, QCA Bluetooth and Adreno firmware this device also needs
+  # belongs to the distribution's linux-firmware package. Ship only the model
+  # directory and the topology name the sound card asks for, as the RPM does, so
+  # the two packages never claim the same path.
+  cp -a "$GAOKUN_DIR/firmware/qcom/sc8280xp/HUAWEI" \
+    "$firmware_stage/lib/firmware/qcom/sc8280xp/"
+  ln -s HUAWEI/gaokun3/audioreach-tplg.bin \
+    "$firmware_stage/lib/firmware/qcom/sc8280xp/SC8280XP-HUAWEI-GAOKUN3-tplg.bin"
   cp "$GAOKUN_DIR/packaging/deb/linux-firmware-gaokun3/hooks/initramfs-hook.in" \
     "$firmware_stage/etc/initramfs-tools/hooks/gaokun3-firmware"
   chmod 0755 "$firmware_stage/etc/initramfs-tools/hooks/gaokun3-firmware"
