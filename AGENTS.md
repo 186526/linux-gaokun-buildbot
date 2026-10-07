@@ -25,7 +25,7 @@ The repository has no `package.json`, `pyproject.toml`, `Cargo.toml`, Go module,
 - `build.env`: reviewed, pinned build inputs (kernel repository, tag, commit, EL2 commit, distro releases). Change it in a commit together with adaptation notes.
 - `patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch`: imports the repository's local DTS and defconfig into the kernel tree. The patch is self-contained and is the authoritative copy of the files under `dts/` and `defconfig/`.
 - `patches/upstream/`: patches intended for the mainline Linux base (`0024`, `0025`).
-- `patches/others/`: additional device, display, touchscreen, clock, SPI, and EC changes (`0007`–`0012`).
+- `patches/others/`: display clock and SPI changes plus DRM/panel fixes (`0007`–`0012`): dispcc-sc8280xp mdp_clk_src parking and `CLK_SET_RATE_PARENT`, `spi-qcom-geni` force-GSI mode, `drm/msm` fbdev screen buffer, `drm/msm/dpu` DSC interface data width, and `drm/panel: himax-hx83121a` orientation. EC and device-support work lives in `patches/upstream/0025` and `patches/0099`, not here.
 - `patches/media/`: SC8280XP Qualcomm Venus media support patches (`0001`, `0004`, `0005`, `0007`).
 - `patches/el2/`: optional EL2 boot and remoteproc/SCM patches (`0006`, `0011`). Paused.
 - `patches/kernelsu/PINNED_REVISION.md`: records the pinned upstream KernelSU revision. KernelSU is not vendored.

@@ -427,13 +427,6 @@ sudo cp $GAOKUN_DIR/tools/touchscreen-tuner/touchscreen-tune.desktop \
     $ROOTFS_DIR/usr/share/applications/touchscreen-tune.desktop
 sudo chmod +x $ROOTFS_DIR/usr/local/bin/touchscreen-tune
 
-# GDM monitor sync script and service
-sudo cp $GAOKUN_DIR/tools/monitors/gdm-monitor-sync \
-    $ROOTFS_DIR/usr/local/bin/
-sudo cp $GAOKUN_DIR/tools/monitors/gdm-monitor-sync.service \
-    $ROOTFS_DIR/etc/systemd/system/
-sudo chmod +x $ROOTFS_DIR/usr/local/bin/gdm-monitor-sync
-
 # Bluetooth address patch script and service
 sudo cp $GAOKUN_DIR/tools/bluetooth/patch-nvm-bdaddr.py \
     $ROOTFS_DIR/usr/local/bin/
@@ -446,11 +439,10 @@ sudo cp $GAOKUN_DIR/tools/audio/sc8280xp.conf \
     $ROOTFS_DIR/usr/share/alsa/ucm2/Qualcomm/sc8280xp/
 
 # Shared image assets used by the CI image pipeline
-sudo mkdir -p $ROOTFS_DIR/usr/local/share/gaokun
+# This installs /etc/xdg/monitors.xml: the panel is portrait and mutter reads that
+# system-level file in every session, including the first-boot setup and login screens.
 sudo cp -a $GAOKUN_DIR/tools/image-assets/etc/. \
     $ROOTFS_DIR/etc/
-sudo cp $GAOKUN_DIR/tools/image-assets/usr/local/share/gaokun/monitors.xml \
-    $ROOTFS_DIR/usr/local/share/gaokun/monitors.xml
 
 # bluetooth.conf now loads both btqca and uhid so BLE HoG mice/keyboards can stay connected.
 # patch-nvm-bdaddr.service patches qca/wcnhpnv21g.bin before bluetooth.service starts.
@@ -565,8 +557,7 @@ cat > /etc/kernel/devicetree <<EOF
 qcom/sc8280xp-huawei-gaokun3.dtb
 EOF
 
-systemctl enable gdm-monitor-sync.service \
-    patch-nvm-bdaddr.service
+systemctl enable patch-nvm-bdaddr.service
 
 cat > /etc/systemd/system/gaokun-fix-x11-unix.service <<'EOF'
 [Unit]

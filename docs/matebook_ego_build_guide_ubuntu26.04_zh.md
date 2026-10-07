@@ -423,13 +423,6 @@ sudo cp $GAOKUN_DIR/tools/touchscreen-tuner/touchscreen-tune.desktop \
     $ROOTFS_DIR/usr/share/applications/touchscreen-tune.desktop
 sudo chmod +x $ROOTFS_DIR/usr/local/bin/touchscreen-tune
 
-# GDM 显示器同步脚本和服务
-sudo cp $GAOKUN_DIR/tools/monitors/gdm-monitor-sync \
-    $ROOTFS_DIR/usr/local/bin/
-sudo cp $GAOKUN_DIR/tools/monitors/gdm-monitor-sync.service \
-    $ROOTFS_DIR/etc/systemd/system/
-sudo chmod +x $ROOTFS_DIR/usr/local/bin/gdm-monitor-sync
-
 # 蓝牙地址修补脚本和服务
 sudo cp $GAOKUN_DIR/tools/bluetooth/patch-nvm-bdaddr.py \
     $ROOTFS_DIR/usr/local/bin/
@@ -442,11 +435,10 @@ sudo cp $GAOKUN_DIR/tools/audio/sc8280xp.conf \
     $ROOTFS_DIR/usr/share/alsa/ucm2/Qualcomm/sc8280xp/
 
 # 复用 CI 镜像流水线里的共享资源
-sudo mkdir -p $ROOTFS_DIR/usr/local/share/gaokun
+# 这里会安装 /etc/xdg/monitors.xml：面板为竖屏，mutter 在每个会话都会读取该
+# 系统级文件，首次开机设置界面与登录界面同样生效。
 sudo cp -a $GAOKUN_DIR/tools/image-assets/etc/. \
     $ROOTFS_DIR/etc/
-sudo cp $GAOKUN_DIR/tools/image-assets/usr/local/share/gaokun/monitors.xml \
-    $ROOTFS_DIR/usr/local/share/gaokun/monitors.xml
 
 # bluetooth.conf 现在会同时加载 btqca 和 uhid，避免 BLE HoG 鼠标/键盘配对后立刻断开。
 # patch-nvm-bdaddr.service 会在 bluetooth.service 之前修补 qca/wcnhpnv21g.bin 中的 BDADDR。
@@ -561,8 +553,7 @@ cat > /etc/kernel/devicetree <<EOF
 qcom/sc8280xp-huawei-gaokun3.dtb
 EOF
 
-systemctl enable gdm-monitor-sync.service \
-    patch-nvm-bdaddr.service
+systemctl enable patch-nvm-bdaddr.service
 
 cat > /etc/systemd/system/gaokun-fix-x11-unix.service <<'EOF'
 [Unit]

@@ -6,7 +6,7 @@ English | [中文](matebook_ego_build_guide_fedora44_zh.md)
 
 > **Target Device**: Huawei MateBook E Go 2023 (codename `gaokun3`)  
 > **Platform**: Qualcomm Snapdragon 8cx Gen3 (`SC8280XP`)  
-> **Target System**: Fedora 44 GNOME, systemd-boot boot, Btrfs root filesystem  
+> **Target System**: Fedora 44 GNOME, systemd-boot boot, ext4 root filesystem  
 > **Recommended Host**: Fedora or other RPM/DNF-based distributions  
 > **Repository Assumption**: This document assumes your current repository is at `~/gaokun/linux-gaokun-buildbot`
 
@@ -243,13 +243,6 @@ sudo cp $GAOKUN_DIR/tools/touchscreen-tuner/touchscreen-tune.desktop \
     $ROOTFS_DIR/usr/share/applications/touchscreen-tune.desktop
 sudo chmod +x $ROOTFS_DIR/usr/local/bin/touchscreen-tune
 
-# GDM monitor sync script and service
-sudo cp $GAOKUN_DIR/tools/monitors/gdm-monitor-sync \
-    $ROOTFS_DIR/usr/local/bin/
-sudo cp $GAOKUN_DIR/tools/monitors/gdm-monitor-sync.service \
-    $ROOTFS_DIR/etc/systemd/system/
-sudo chmod +x $ROOTFS_DIR/usr/local/bin/gdm-monitor-sync
-
 # Bluetooth address patch script and service
 sudo cp $GAOKUN_DIR/tools/bluetooth/patch-nvm-bdaddr.py \
     $ROOTFS_DIR/usr/local/bin/
@@ -262,11 +255,10 @@ sudo cp $GAOKUN_DIR/tools/audio/sc8280xp.conf \
     $ROOTFS_DIR/usr/share/alsa/ucm2/Qualcomm/sc8280xp/
 
 # Shared image assets used by the CI image pipeline
-sudo mkdir -p $ROOTFS_DIR/usr/local/share/gaokun
+# This installs /etc/xdg/monitors.xml: the panel is portrait and mutter reads that
+# system-level file in every session, including the first-boot setup and login screens.
 sudo cp -a $GAOKUN_DIR/tools/image-assets/etc/. \
     $ROOTFS_DIR/etc/
-sudo cp $GAOKUN_DIR/tools/image-assets/usr/local/share/gaokun/monitors.xml \
-    $ROOTFS_DIR/usr/local/share/gaokun/monitors.xml
 
 # bluetooth.conf now loads both btqca and uhid so BLE HoG mice/keyboards can stay connected.
 # patch-nvm-bdaddr.service patches qca/wcnhpnv21g.bin before bluetooth.service starts.
@@ -355,15 +347,14 @@ install -d /etc/kernel/install.d
 ln -sf /dev/null /etc/kernel/install.d/51-dracut-rescue.install
 
 cat > /etc/kernel/cmdline <<EOF
-root=UUID=${ROOT_UUID} rootflags=subvol=@ clk_ignore_unused pd_ignore_unused arm64.nopauth iommu.passthrough=0 iommu.strict=0 pcie_aspm.policy=powersupersave efi=noruntime usbhid.quirks=0x12d1:0x10b8:0x20000000 consoleblank=0 loglevel=4 psi=1
+root=UUID=${ROOT_UUID} clk_ignore_unused pd_ignore_unused arm64.nopauth iommu.passthrough=0 iommu.strict=0 pcie_aspm.policy=powersupersave efi=noruntime usbhid.quirks=0x12d1:0x10b8:0x20000000 consoleblank=0 loglevel=4 psi=1
 EOF
 
 cat > /etc/kernel/devicetree <<EOF
 qcom/sc8280xp-huawei-gaokun3.dtb
 EOF
 
-systemctl enable gdm-monitor-sync.service \
-    patch-nvm-bdaddr.service
+systemctl enable patch-nvm-bdaddr.service
 
 dracut --force --kver $KREL
 if [ -n "$KREL_EL2" ]; then
@@ -388,7 +379,7 @@ if [ -n "$KREL_EL2" ]; then
 layout=bls
 EOF
     cat > $EL2_CONF_ROOT/cmdline <<EOF
-root=UUID=${ROOT_UUID} rootflags=subvol=@ clk_ignore_unused pd_ignore_unused arm64.nopauth iommu.passthrough=0 iommu.strict=0 pcie_aspm.policy=powersupersave modprobe.blacklist=simpledrm efi=noruntime usbhid.quirks=0x12d1:0x10b8:0x20000000 consoleblank=0 loglevel=4 psi=1
+root=UUID=${ROOT_UUID} clk_ignore_unused pd_ignore_unused arm64.nopauth iommu.passthrough=0 iommu.strict=0 pcie_aspm.policy=powersupersave modprobe.blacklist=simpledrm efi=noruntime usbhid.quirks=0x12d1:0x10b8:0x20000000 consoleblank=0 loglevel=4 psi=1
 EOF
     cat > $EL2_CONF_ROOT/devicetree <<EOF
 qcom/sc8280xp-huawei-gaokun3-el2.dtb
