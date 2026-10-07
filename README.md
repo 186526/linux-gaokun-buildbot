@@ -2,20 +2,41 @@ English | [中文](docs/README_zh.md)
 
 # linux-gaokun-buildbot
 
-Build scripts, tools, and firmware for Linux images targeting the Huawei MateBook E Go 2023 (codename `gaokun3`) based on Qualcomm Snapdragon 8cx Gen3 (`SC8280XP`).
+Build scripts, tools, and firmware for Linux images targeting the Huawei MateBook E Go 2023 (codename `gaokun3`) based on Qualcomm Snapdragon 8cx Gen3 (`SC8280XP`). The kernel sources, drivers, device trees, and `gaokun3_defconfig` are maintained in the separate downstream kernel repository [`gaokun3/linux`](https://github.com/gaokun3/linux).
 
 The image pipeline now uses `systemd-boot` by default and can optionally build a second EL2 kernel variant with `CONFIG_LOCALVERSION="-gaokun3-el2"`. Builds can also opt into the KernelSU integration with `BUILD_KERNELSU`.
+
+### Pinned kernel input
+
+`build.env` pins the exact kernel input, and `./build.sh kernel|debs|rpms` is the local entry point that consumes it:
+
+```bash
+KERNEL_REPOSITORY=gaokun3/linux
+KERNEL_TAG=gaokun3
+KERNEL_COMMIT=73033564068250603f5b2150c408554faaf22d66
+KERNEL_EL2_COMMIT=
+FEDORA_RELEASE=44
+UBUNTU_RELEASE=26.04
+```
+
+`scripts/lib/kernel_source.sh` clones exactly that commit (`git fetch --depth=1`, detached HEAD) and refuses to continue when the checkout is at another commit or contains local edits or untracked files. `KERNEL_TAG` is only a naming label; the commit is what is checked out. EL2 is paused: `KERNEL_EL2_COMMIT` is empty and `build.sh` refuses a requested `BUILD_EL2=true` build until a reviewed EL2 commit is pinned.
 
 ## What is included
 
 ### Repository layout
 
+- `build.sh`: local build entry point (`./build.sh kernel|debs|rpms`); sources `build.env` and prepares the pinned kernel checkout
+- `build.env`: reviewed, pinned build inputs (kernel repository, tag, commit, EL2 commit, distro releases)
+- `patches/`: the device patch series applied on top of the pinned kernel, plus `patches/kernelsu/PINNED_REVISION.md`
+- `defconfig/`, `dts/`: mirrors of the DTS files and `gaokun3_defconfig` embedded in `patches/0099` (the build applies the patch, not these directories)
 - `docs/`: bilingual usage/build guides and platform notes
 - `firmware/`: minimal firmware bundle used by the image build
 - `packaging/`: distro kernel and firmware package templates and metadata
-- `tools/`: device-specific helper scripts, service files, and EL2 EFI payloads
 - `scripts/ci/`: workflow build, image creation, and packaging scripts
-- `scripts/local/`: some useful scripts that can be run on the local device
+- `scripts/lib/`: pinned-source preparation and guards
+- `scripts/local/`: legacy interactive on-device build helper
+- `tests/`: Python unit tests for the source guards and for `kernel-install` entry-token/BLS behavior
+- `tools/`: device-specific helper scripts, service files, image assets, and EL2 EFI payloads
 
 ### Package outputs
 
@@ -29,21 +50,20 @@ The package pipeline builds and installs dedicated package sets:
 
 ### Releases
 
-- Fedora and Ubuntu image releases contain compressed installable images.
+- Fedora, Debian, and Ubuntu image releases contain compressed installable images.
 - Gaokun RPM and DEB releases contain the standalone kernel and firmware package sets used by the image workflows.
 
-### Kernel sources
+### Kernel patches
 
-- `upstream/*` and `others/0017`: adapted from [right-0903/linux-gaokun](https://github.com/right-0903/linux-gaokun) for the base SC8280XP / gaokun3 enablement, display bring-up, EC suspend/resume, ADSP FastRPC, and DSI stability work
-- `others/0001`: adapted from [whitelewi1-ctrl/matebook-e-go-linux](https://github.com/whitelewi1-ctrl/matebook-e-go-linux) to avoid setting `USE_BDADDR_PROPERTY` when the adapter address is invalid
-- `others/0002`: local change in this repository to enable DSC and allow 60 Hz / 120 Hz switching
-- `others/0003`: adapted from [chiyuki0325/EGoTouchRev-Linux](https://github.com/chiyuki0325/EGoTouchRev-Linux) to add the Himax HX83121A SPI touchscreen driver
-- `others/0012`: local change to report the panel orientation from the device tree (`rotation`), so plymouth and compositors auto-rotate the built-in display on boot
-- `media/*`: adapted from the [jhovold/linux](https://github.com/jhovold/linux/commits/wip/sc8280xp-6.16) to add SC8280XP Venus support
-- `0099`: local patch in this repository to import the current DTS files and `gaokun3_defconfig`
-- **[Optional]** `kernelsu/PINNED_REVISION.md`: records the pinned upstream KernelSU revision. KernelSU is not vendored; when `BUILD_KERNELSU=true` the build clones `https://github.com/tiann/KernelSU.git` at `v3.3.0` (`932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e`) and wires it into the kernel tree before configuration, so both the standard and EL2 variants include KernelSU.
-- **[Optional]** `el2/*`: adapted from [TravMurav/linux](https://github.com/TravMurav/linux/tree/x13s-6.18-v1.1-cxsd) for the EL2 boot path, including SMP2P handover, remoteproc attach/restart flow, SCM/SHM owner handling, and related rpmsg/QRTR/pmic_glink stability fixes
-- **[Optional]** `xanmod/*`: base-local overrides for `upstream/0018` and `0099` when building against an [XanMod](https://gitlab.com/xanmod/linux) base (`kernel_base=xanmod`); patches already present in the base (e.g. `upstream/0017`) are skipped automatically
+The pinned kernel already carries most of the device enablement. The build applies the remaining patches on top of it, per series and in filename order:
+
+- `patches/upstream/*` (`0024`, `0025`): USB UCSI `huawei_gaokun` port initialization and event handling, and the Gaokun3 ADSP heap and device-support correction.
+- `patches/others/*` (`0007`–`0012`): SC8280XP display clock parking and rate-parent fixes, the force-GSI-mode property for `spi-qcom-geni`, virtual fbdev screen buffer, DPU DSC interface data width, and panel orientation for `himax-hx83121a`.
+- `patches/media/*` (`0001`, `0004`, `0005`, `0007`): SC8280XP Venus resource structs, adapted from the [jhovold/linux](https://github.com/jhovold/linux/commits/wip/sc8280xp-6.16) Venus series.
+- `patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch`: imports this repository's DTS files and `gaokun3_defconfig`. The patch is self-contained and is the authoritative copy of `dts/` and `defconfig/`.
+- `patches/el2/*` (`0006`, `0011`): remoteproc restart of detached remoteprocs and the Qualcomm SCM shared-memory bridge VMID binding. Adapted from [TravMurav/linux](https://github.com/TravMurav/linux/tree/x13s-6.18-v1.1-cxsd), currently paused.
+- `patches/xanmod/*`: base-local overrides for the [XanMod](https://gitlab.com/xanmod/linux) base (`kernel_base=xanmod`). A same-name file replaces the shared patch (for example `patches/xanmod/0099-...`); files with no shared counterpart (`patches/xanmod/upstream/0018-...`, `patches/xanmod/others/0018-...`, `patches/xanmod/media/0006-...`, `patches/xanmod/el2/0009,0010,0016-...`) are applied only on that base. A patch that is already present in the base tree is skipped automatically when `git apply --reverse --check` succeeds.
+- **[Optional]** `patches/kernelsu/PINNED_REVISION.md`: records the pinned upstream KernelSU revision. KernelSU is not vendored; when `BUILD_KERNELSU=true` the build clones `https://github.com/tiann/KernelSU.git` at `v3.3.0` (`932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e`) and wires it into the kernel tree before configuration, so both the standard and EL2 variants include KernelSU.
 
 ### Tool Sources
 
@@ -56,8 +76,8 @@ The package pipeline builds and installs dedicated package sets:
 
 The image and local-install workflows now follow the standard `kernel-install` + BLS flow instead of hand-writing `systemd-boot` entries.
 
-- BLS entries use the distribution name: `loader/entries/fedora-<kernel-release>.conf` or `loader/entries/ubuntu-<kernel-release>.conf`. `/etc/kernel/entry-token` persists that name for package upgrades and initramfs hooks; explicit calls use `--entry-token=os-id`.
-- Kernel, initrd/initramfs, and DTB files are placed under `fedora/<kernel-release>/` or `ubuntu/<kernel-release>/` on the ESP. The system machine ID remains separate.
+- BLS entries use the distribution name on Fedora and Ubuntu: `loader/entries/fedora-<kernel-release>.conf` or `loader/entries/ubuntu-<kernel-release>.conf`. `/etc/kernel/entry-token` persists that name for package upgrades and initramfs hooks; explicit calls use `--entry-token=os-id`. Debian uses the machine ID instead, producing `loader/entries/<machine-id>-<kernel-release>.conf`.
+- Kernel, initrd/initramfs, and DTB files are placed under `fedora/<kernel-release>/` or `ubuntu/<kernel-release>/` on the ESP. Debian keeps the machine-ID directory name. The system machine ID remains separate.
 - Existing machine-ID entries are retained as fallback entries during migration. After booting and verifying the new entry, old entries can be removed deliberately. Two installations of the same distribution sharing an ESP need distinct tokens. See [boot layout](docs/boot-layout.md).
 - A compatibility copy of the DTB is also kept in `/boot` so users can switch to GRUB more easily later.
 - Ubuntu DTBs are installed in `/usr/lib/linux-image-<kernel-release>/qcom/` for `kernel-install`, plus `/boot/dtb-<kernel-release>` as a compatibility copy.
@@ -66,7 +86,9 @@ The image and local-install workflows now follow the standard `kernel-install` +
 
 ## Local builds with KernelSU
 
-The local helper `scripts/local/build_kernel.sh` can integrate KernelSU. It is interactive by default, but every prompt has a non-interactive override, so it can also run unattended:
+For a reproducible, pinned build use `./build.sh` (see [Pinned kernel input](#pinned-kernel-input)); it also honors `BUILD_KERNELSU=true` and `BUILD_EL2=true`.
+
+The legacy on-device helper `scripts/local/build_kernel.sh` clones mainline and applies the patch series itself. It can integrate KernelSU. It is interactive by default, but every prompt has a non-interactive override, so it can also run unattended:
 
 ```bash
 export KERNEL_TAG=7.2.9-xanmod1   # real XanMod tag
@@ -101,7 +123,8 @@ Notes:
 
 ## Getting started
 
-- Release: <https://github.com/KawaiiHachimi/linux-gaokun-buildbot/releases>
+- Release: <https://github.com/186526/linux-gaokun-buildbot/releases>
+- Pinned-kernel migration record and blockers: [migration.md](docs/migration.md)
 - Dual-boot guide: [English](docs/dual_boot_guide_en.md) | [中文](docs/dual_boot_guide_zh.md)
 - Historical EL2 implementation notes: [English](docs/el2_kvm_guide_en.md) | [中文](docs/el2_kvm_guide_zh.md)
 - Awesome Gaokun3: [English](docs/awesome_gaokun3_en.md) | [中文](docs/awesome_gaokun3_zh.md)
@@ -114,6 +137,7 @@ For an overview of hardware support status on the device, see [right-0903/linux-
 
 ## References
 
+- [gaokun3/linux](https://github.com/gaokun3/linux) : The downstream kernel tree pinned by `build.env`; it carries the device enablement, DTS, drivers, and `gaokun3_defconfig` that this repository previously applied as patches.
 - [right-0903/linux-gaokun](https://github.com/right-0903/linux-gaokun) : The main source of the kernel patches and device support work, with detailed commit messages and explanations.
 - [TheUnknownThing/linux-gaokun](https://github.com/TheUnknownThing/linux-gaokun) : Another fork of the kernel patches and device support work, with some unique commits and explanations for Touchscreen and EC.
 - [whitelewi1-ctrl/matebook-e-go-linux](https://github.com/whitelewi1-ctrl/matebook-e-go-linux) : The earliest repo to fix panel backlight problem, with some additional resources and modifications for Gaokun3 Linux support.

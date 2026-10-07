@@ -6,7 +6,7 @@
 
 ## 1. 文档定位
 
-- 常规镜像与软件包构建流程已经可以可选产出 `-gaokun3-el2` 内核变体以及所需 EFI 载荷。
+- 构建流程可以可选产出 `-gaokun3-el2` 内核变体以及所需 EFI 载荷，但 EL2 目前暂停：`build.env` 的 `KERNEL_EL2_COMMIT` 为空，`build.sh` 在已审阅的 EL2 提交固定前会拒绝 `BUILD_EL2=true` 构建。
 - 本文更侧重说明这些 EL2 构建产物背后的实现细节、启动链结构，以及内核与固件要求。
 - 因此它更适合作为理解、调试和定制 EL2 路径的参考，而不是构建完成后必须逐项执行的清单。
 
@@ -42,7 +42,7 @@
 - `tcblaunch.exe` 是配合 `slbounce` 使用的 TCB 文件，仓库中自带一个经过验证可用的微软签名 TCB 二进制文件
 - `qebspil` 负责在 UEFI 阶段完成 DSP 预启动
 - `systemd-boot` 只负责提供标准项和 EL2 项两个菜单入口；真正决定 EL2 行为的是 EL2 BLS 菜单项指向的内核、initrd 与 DTB
-- 标准内核文件布局现在由 `kernel-install` 自动生成，默认与 `machine-id`/entry-token 挂钩
+- 标准内核文件布局现在由 `kernel-install` 自动生成。Fedora 与 Ubuntu 使用 `os-id` entry token（`fedora`/`ubuntu`），Debian 使用 `machine-id`
 
 EFI 侧至少需要以下文件：
 
@@ -97,7 +97,7 @@ EFI 侧至少需要以下文件：
 
 其中：
 
-- `<entry-token>` 默认通常就是 `/etc/machine-id`
+- `<entry-token>` 在这些镜像上为 `fedora` 或 `ubuntu`，Debian 上为 `/etc/machine-id`
 - 上面的 `linux` 文件名是 `90-loaderentry.install` 自动生成的标准 BLS Type #1 命名，不再是手工命名的 `vmlinuz`
 - 若系统改用了别的 `kernel-install --entry-token`，目录名前缀会随之变化，但整体结构不变
 
@@ -132,16 +132,15 @@ CONFIG_QCOM_PIL_INFO=y
 
 ### 4.2 补丁的作用
 
-当前可直接使用仓库内 `patches/el2` 中的补丁集。按语义分类，重点涉及以下三个方向：
+当前可直接使用仓库内 `patches/el2` 中的补丁集。它现在只有两个补丁（`0006` 与 `0011`），覆盖两个方向：
 
 1. **remoteproc handover / late attach**
-   使 Linux 能够接管由 `qebspil` 预先启动的 remoteproc，而不是把这些 remoteproc 视为异常或重复启动对象。
+   使 Linux 能够接管由 `qebspil` 预先启动的 remoteproc，而不是把这些 remoteproc 视为异常或重复启动对象。`0006` 允许重启已 detached 的 remoteproc。
 
 2. **qcom PAS / SCM / SHM bridge 在 EL2 下的支持**
-   使 SCM 与 SHM bridge 在 EL2 下使用正确的 owner/VMID，并处理 bare-metal EL2 环境下 PAS reset 本身不可靠的问题。
+   使 SCM 与 SHM bridge 在 EL2 下使用正确的 owner/VMID。`0011` 新增 `qcom,shm-bridge-vm` 绑定。
 
-3. **SMP2P / rpmsg / QRTR / pmic_glink 的竞态与接管稳定性修正**
-   修正在 remoteproc 已由启动阶段预先拉起后，SMP2P 状态接管、rpmsg 通道建立、QRTR 握手以及 pmic_glink 探测顺序中的竞态问题，避免出现设备已运行但通信链路未正确建立的情况。
+此处原先列出的 SMP2P / rpmsg / QRTR / pmic_glink 稳定性补丁并不在当前 `patches/el2` 中，而是保留在 XanMod 专用覆盖 `patches/xanmod/el2/`（`0009`、`0010`、`0016`），仅在 `KERNEL_BASE=xanmod` 时应用。EL2 整体暂停，直到固定的 `KERNEL_EL2_COMMIT` 通过审阅。
 
 ## 5. 固件准备
 

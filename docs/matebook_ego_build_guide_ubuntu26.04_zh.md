@@ -18,9 +18,8 @@
 
 本文使用项目内已有内容，不需要额外获取设备专属仓库：
 
-- `patches/`
-- `defconfig/`
-- `dts/`
+- `patches/`（叠加在固定内核之上的设备补丁序列）
+- `defconfig/`、`dts/`（`patches/0099` 内嵌 DTS 与 `gaokun3_defconfig` 的镜像副本；构建应用的是补丁，而非这两个目录）
 - `tools/`
 - `firmware/`
 
@@ -47,13 +46,15 @@ sudo apt-get install -y \
 mkdir -p ~/gaokun/matebook-build-ubuntu
 
 cd ~/gaokun
-# 获取指定版本的 Linux 主线源码
-if [ ! -d "mainline-linux" ]; then
-    git clone --depth 1 --branch v7.2-rc2 \
-        https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git \
-        mainline-linux
+# 获取 build.env 中固定的下游内核提交
+if [ ! -d "gaokun3-linux" ]; then
+    git clone https://github.com/gaokun3/linux.git gaokun3-linux
+    git -C gaokun3-linux fetch --depth=1 origin 73033564068250603f5b2150c408554faaf22d66
+    git -C gaokun3-linux checkout --detach FETCH_HEAD
 fi
 ```
+
+> 更正：内核输入由 `build.env` 固定为 `gaokun3/linux` 的 `73033564068250603f5b2150c408554faaf22d66`，不再是 `torvalds/linux` 的 `v7.2-rc2` 标签。可复现构建应直接使用 `./build.sh kernel|debs|rpms`。
 
 设置环境变量：
 
@@ -422,13 +423,6 @@ sudo cp $GAOKUN_DIR/tools/touchscreen-tuner/touchscreen-tune.desktop \
     $ROOTFS_DIR/usr/share/applications/touchscreen-tune.desktop
 sudo chmod +x $ROOTFS_DIR/usr/local/bin/touchscreen-tune
 
-# GDM 显示器同步脚本和服务
-sudo cp $GAOKUN_DIR/tools/monitors/gdm-monitor-sync \
-    $ROOTFS_DIR/usr/local/bin/
-sudo cp $GAOKUN_DIR/tools/monitors/gdm-monitor-sync.service \
-    $ROOTFS_DIR/etc/systemd/system/
-sudo chmod +x $ROOTFS_DIR/usr/local/bin/gdm-monitor-sync
-
 # 蓝牙地址修补脚本和服务
 sudo cp $GAOKUN_DIR/tools/bluetooth/patch-nvm-bdaddr.py \
     $ROOTFS_DIR/usr/local/bin/
@@ -441,11 +435,10 @@ sudo cp $GAOKUN_DIR/tools/audio/sc8280xp.conf \
     $ROOTFS_DIR/usr/share/alsa/ucm2/Qualcomm/sc8280xp/
 
 # 复用 CI 镜像流水线里的共享资源
-sudo mkdir -p $ROOTFS_DIR/usr/local/share/gaokun
+# 这里会安装 /etc/xdg/monitors.xml：面板为竖屏，mutter 在每个会话都会读取该
+# 系统级文件，首次开机设置界面与登录界面同样生效。
 sudo cp -a $GAOKUN_DIR/tools/image-assets/etc/. \
     $ROOTFS_DIR/etc/
-sudo cp $GAOKUN_DIR/tools/image-assets/usr/local/share/gaokun/monitors.xml \
-    $ROOTFS_DIR/usr/local/share/gaokun/monitors.xml
 
 # bluetooth.conf 现在会同时加载 btqca 和 uhid，避免 BLE HoG 鼠标/键盘配对后立刻断开。
 # patch-nvm-bdaddr.service 会在 bluetooth.service 之前修补 qca/wcnhpnv21g.bin 中的 BDADDR。
@@ -560,8 +553,7 @@ cat > /etc/kernel/devicetree <<EOF
 qcom/sc8280xp-huawei-gaokun3.dtb
 EOF
 
-systemctl enable gdm-monitor-sync.service \
-    patch-nvm-bdaddr.service
+systemctl enable patch-nvm-bdaddr.service
 
 cat > /etc/systemd/system/gaokun-fix-x11-unix.service <<'EOF'
 [Unit]
@@ -598,7 +590,7 @@ MACHINE_ID=$(cat /etc/machine-id)
 
 bootctl --no-variables --esp-path=/boot/efi install
 
-kernel-install --make-entry-directory=yes --entry-token=machine-id add \
+kernel-install --make-entry-directory=yes --entry-token=os-id add \
     $KREL /boot/vmlinuz-$KREL /boot/initrd.img-$KREL
 
 if [ -n "$KREL_EL2" ]; then
@@ -616,7 +608,7 @@ EOF
 qcom/sc8280xp-huawei-gaokun3-el2.dtb
 EOF
     KERNEL_INSTALL_CONF_ROOT=$EL2_CONF_ROOT \
-        kernel-install --make-entry-directory=yes --entry-token=machine-id add \
+        kernel-install --make-entry-directory=yes --entry-token=os-id add \
         $KREL_EL2 /boot/vmlinuz-$KREL_EL2 /boot/initrd.img-$KREL_EL2
     rm -rf $EL2_CONF_ROOT
 
@@ -632,7 +624,7 @@ EOF
 fi
 
 cat > /boot/efi/loader/loader.conf <<EOF
-default ${MACHINE_ID}-${KREL}.conf
+default ubuntu-${KREL}.conf
 timeout 5
 console-mode keep
 editor no
@@ -644,8 +636,8 @@ exit
 说明：
 
 - 这里不再手工创建 `loader/entries/*.conf`，而是交给 `kernel-install` 的 `90-loaderentry.install` 自动生成标准 BLS 条目。
-- 默认使用 `--entry-token=machine-id`，所以最终条目文件名会是 `/boot/efi/loader/entries/<machine-id>-<kernel-release>.conf`。
-- 内核、`initrd` 和 DTB 会自动复制到 `/boot/efi/<machine-id>/<kernel-release>/` 下；这正是 BLS Type #1 的标准目录布局。
+- 镜像脚本使用 `--entry-token=os-id`，所以最终条目文件名是 `/boot/efi/loader/entries/ubuntu-<kernel-release>.conf`，`/etc/kernel/entry-token` 写入 `ubuntu`。
+- 内核、`initrd` 和 DTB 会自动复制到 `/boot/efi/ubuntu/<kernel-release>/` 下；这正是 BLS Type #1 的标准目录布局。
 
 ### 4. 收尾清理
 

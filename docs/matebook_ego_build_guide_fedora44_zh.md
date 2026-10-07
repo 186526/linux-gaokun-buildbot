@@ -6,11 +6,11 @@
 
 > **目标机型**：Huawei MateBook E Go 2023（代号 `gaokun3`）  
 > **平台**：高通骁龙 8cx Gen3（`SC8280XP`）  
-> **目标系统**：Fedora 44 GNOME，systemd-boot 启动，Btrfs 根文件系统  
+> **目标系统**：Fedora 44 GNOME，systemd-boot 启动，ext4 根文件系统  
 > **推荐宿主机**：Fedora 或其他基于 RPM/DNF 的发行版  
 > **仓库假设**：本文默认你当前仓库位于 `~/gaokun/linux-gaokun-buildbot`
 
-**WSL2 建议切换到支持 `vfat`、`btrfs` 等文件系统更完整的内核，例如：<https://github.com/Nevuly/WSL2-Linux-Kernel-Rolling/releases>**
+**WSL2 建议切换到支持 `vfat`、`ext4` 等文件系统更完整的内核，例如：<https://github.com/Nevuly/WSL2-Linux-Kernel-Rolling/releases>**
 
 ---
 
@@ -44,13 +44,15 @@ sudo dnf install gcc make bison flex bc openssl-devel elfutils-libelf-devel \
 mkdir -p ~/gaokun/matebook-build-fedora
 
 cd ~/gaokun
-# 获取指定版本的 Linux 主线源码
-if [ ! -d "mainline-linux" ]; then
-    git clone --depth 1 --branch v7.2-rc2 \
-        https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git \
-        mainline-linux
+# 获取 build.env 中固定的下游内核提交
+if [ ! -d "gaokun3-linux" ]; then
+    git clone https://github.com/gaokun3/linux.git gaokun3-linux
+    git -C gaokun3-linux fetch --depth=1 origin 73033564068250603f5b2150c408554faaf22d66
+    git -C gaokun3-linux checkout --detach FETCH_HEAD
 fi
 ```
+
+> 更正：内核输入由 `build.env` 固定为 `gaokun3/linux` 的 `73033564068250603f5b2150c408554faaf22d66`，不再是 `torvalds/linux` 的 `v7.2-rc2` 标签。可复现构建应直接使用 `./build.sh kernel|debs|rpms`。
 
 设置环境变量：
 
@@ -241,13 +243,6 @@ sudo cp $GAOKUN_DIR/tools/touchscreen-tuner/touchscreen-tune.desktop \
     $ROOTFS_DIR/usr/share/applications/touchscreen-tune.desktop
 sudo chmod +x $ROOTFS_DIR/usr/local/bin/touchscreen-tune
 
-# GDM 显示器同步脚本和服务
-sudo cp $GAOKUN_DIR/tools/monitors/gdm-monitor-sync \
-    $ROOTFS_DIR/usr/local/bin/
-sudo cp $GAOKUN_DIR/tools/monitors/gdm-monitor-sync.service \
-    $ROOTFS_DIR/etc/systemd/system/
-sudo chmod +x $ROOTFS_DIR/usr/local/bin/gdm-monitor-sync
-
 # 蓝牙地址修补脚本和服务
 sudo cp $GAOKUN_DIR/tools/bluetooth/patch-nvm-bdaddr.py \
     $ROOTFS_DIR/usr/local/bin/
@@ -260,11 +255,10 @@ sudo cp $GAOKUN_DIR/tools/audio/sc8280xp.conf \
     $ROOTFS_DIR/usr/share/alsa/ucm2/Qualcomm/sc8280xp/
 
 # 复用 CI 镜像流水线里的共享资源
-sudo mkdir -p $ROOTFS_DIR/usr/local/share/gaokun
+# 这里会安装 /etc/xdg/monitors.xml：面板为竖屏，mutter 在每个会话都会读取该
+# 系统级文件，首次开机设置界面与登录界面同样生效。
 sudo cp -a $GAOKUN_DIR/tools/image-assets/etc/. \
     $ROOTFS_DIR/etc/
-sudo cp $GAOKUN_DIR/tools/image-assets/usr/local/share/gaokun/monitors.xml \
-    $ROOTFS_DIR/usr/local/share/gaokun/monitors.xml
 
 # bluetooth.conf 现在会同时加载 btqca 和 uhid，避免 BLE HoG 鼠标/键盘配对后立刻断开。
 # patch-nvm-bdaddr.service 会在 bluetooth.service 之前修补 qca/wcnhpnv21g.bin 中的 BDADDR。
@@ -283,43 +277,30 @@ truncate -s 12G $IMAGE_FILE
 parted -s $IMAGE_FILE mklabel gpt
 parted -s $IMAGE_FILE mkpart EFI fat32 1MiB 1025MiB
 parted -s $IMAGE_FILE set 1 esp on
-parted -s $IMAGE_FILE mkpart rootfs btrfs 1025MiB 100%
+parted -s $IMAGE_FILE mkpart rootfs ext4 1025MiB 100%
 
 LOOP=$(sudo losetup --show -fP $IMAGE_FILE)
 sudo mkfs.vfat -F32 -n EFI ${LOOP}p1
-sudo mkfs.btrfs -f -L rootfs ${LOOP}p2
+sudo mkfs.ext4 -L rootfs ${LOOP}p2
 
 EFI_UUID=$(sudo blkid -s UUID -o value ${LOOP}p1)
 ROOT_UUID=$(sudo blkid -s UUID -o value ${LOOP}p2)
 ```
 
-### 2. 创建 Btrfs 子卷并同步 RootFS
+### 2. 格式化根分区并同步 RootFS
+
+> 更正：Fedora 镜像现在使用单个 ext4 根分区，`/home` 与 `/var` 是根分区内的普通目录，不再创建 Btrfs 子卷。
 
 ```bash
 sudo mkdir -p /mnt/ego-fedora
-
-# 创建 Fedora 常见子卷布局：@ 用于根分区，@home 用于家目录，@var 用于 /var
 sudo mount ${LOOP}p2 /mnt/ego-fedora
-sudo btrfs subvolume create /mnt/ego-fedora/@
-sudo btrfs subvolume create /mnt/ego-fedora/@home
-sudo btrfs subvolume create /mnt/ego-fedora/@var
-sudo umount /mnt/ego-fedora
-
-# 挂载子卷并准备 EFI 分区
-sudo mount -o subvol=@ ${LOOP}p2 /mnt/ego-fedora
-sudo mkdir -p /mnt/ego-fedora/home
-sudo mount -o subvol=@home ${LOOP}p2 /mnt/ego-fedora/home
-sudo mkdir -p /mnt/ego-fedora/var
-sudo mount -o subvol=@var ${LOOP}p2 /mnt/ego-fedora/var
 sudo mkdir -p /mnt/ego-fedora/boot/efi
 sudo mount ${LOOP}p1 /mnt/ego-fedora/boot/efi
 
-sudo rsync -aHAX --info=progress2 --exclude='/proc/*' --exclude='/sys/*' --exclude='/dev/*' --exclude='/run/*' $ROOTFS_DIR/ /mnt/ego-fedora/
+sudo rsync -aHAX --numeric-ids --info=progress2 --exclude='/proc/*' --exclude='/sys/*' --exclude='/dev/*' --exclude='/run/*' $ROOTFS_DIR/ /mnt/ego-fedora/
 
 sudo tee /mnt/ego-fedora/etc/fstab > /dev/null <<EOF
-UUID=${ROOT_UUID}  /         btrfs  subvol=@,compress=zstd:1,ssd,noatime  0  0
-UUID=${ROOT_UUID}  /home     btrfs  subvol=@home,compress=zstd:1,ssd,noatime  0  0
-UUID=${ROOT_UUID}  /var      btrfs  subvol=@var,compress=zstd:1,ssd,noatime  0  0
+UUID=${ROOT_UUID}  /         ext4   errors=remount-ro,noatime  0  1
 UUID=${EFI_UUID}   /boot/efi vfat   defaults,nofail,x-systemd.device-timeout=10s  0  2
 EOF
 ```
@@ -366,15 +347,14 @@ install -d /etc/kernel/install.d
 ln -sf /dev/null /etc/kernel/install.d/51-dracut-rescue.install
 
 cat > /etc/kernel/cmdline <<EOF
-root=UUID=${ROOT_UUID} rootflags=subvol=@ clk_ignore_unused pd_ignore_unused arm64.nopauth iommu.passthrough=0 iommu.strict=0 pcie_aspm.policy=powersupersave efi=noruntime usbhid.quirks=0x12d1:0x10b8:0x20000000 consoleblank=0 loglevel=4 psi=1
+root=UUID=${ROOT_UUID} clk_ignore_unused pd_ignore_unused arm64.nopauth iommu.passthrough=0 iommu.strict=0 pcie_aspm.policy=powersupersave efi=noruntime usbhid.quirks=0x12d1:0x10b8:0x20000000 consoleblank=0 loglevel=4 psi=1
 EOF
 
 cat > /etc/kernel/devicetree <<EOF
 qcom/sc8280xp-huawei-gaokun3.dtb
 EOF
 
-systemctl enable gdm-monitor-sync.service \
-    patch-nvm-bdaddr.service
+systemctl enable patch-nvm-bdaddr.service
 
 dracut --force --kver $KREL
 if [ -n "$KREL_EL2" ]; then
@@ -387,7 +367,7 @@ MACHINE_ID=$(cat /etc/machine-id)
 
 bootctl --no-variables --esp-path=/boot/efi install
 
-kernel-install --make-entry-directory=yes --entry-token=machine-id add \
+kernel-install --make-entry-directory=yes --entry-token=os-id add \
     $KREL /boot/vmlinuz-$KREL
 
 if [ -n "$KREL_EL2" ]; then
@@ -399,13 +379,13 @@ if [ -n "$KREL_EL2" ]; then
 layout=bls
 EOF
     cat > $EL2_CONF_ROOT/cmdline <<EOF
-root=UUID=${ROOT_UUID} rootflags=subvol=@ clk_ignore_unused pd_ignore_unused arm64.nopauth iommu.passthrough=0 iommu.strict=0 pcie_aspm.policy=powersupersave modprobe.blacklist=simpledrm efi=noruntime usbhid.quirks=0x12d1:0x10b8:0x20000000 consoleblank=0 loglevel=4 psi=1
+root=UUID=${ROOT_UUID} clk_ignore_unused pd_ignore_unused arm64.nopauth iommu.passthrough=0 iommu.strict=0 pcie_aspm.policy=powersupersave modprobe.blacklist=simpledrm efi=noruntime usbhid.quirks=0x12d1:0x10b8:0x20000000 consoleblank=0 loglevel=4 psi=1
 EOF
     cat > $EL2_CONF_ROOT/devicetree <<EOF
 qcom/sc8280xp-huawei-gaokun3-el2.dtb
 EOF
     KERNEL_INSTALL_CONF_ROOT=$EL2_CONF_ROOT \
-        kernel-install --make-entry-directory=yes --entry-token=machine-id add \
+        kernel-install --make-entry-directory=yes --entry-token=os-id add \
         $KREL_EL2 /boot/vmlinuz-$KREL_EL2
     rm -rf $EL2_CONF_ROOT
 
@@ -421,7 +401,7 @@ EOF
 fi
 
 cat > /boot/efi/loader/loader.conf <<EOF
-default ${MACHINE_ID}-${KREL}.conf
+default fedora-${KREL}.conf
 timeout 5
 console-mode keep
 editor no
@@ -433,7 +413,7 @@ exit
 说明：
 
 - 这里不再手工维护 `loader/entries/*.conf` 和 `gaokun3/fedora/...` 目录，而是让 `kernel-install` 生成标准 BLS Type #1 布局。
-- 默认使用 `--entry-token=machine-id`，因此条目名会变成 `/boot/efi/loader/entries/<machine-id>-<kernel-release>.conf`。
+- 镜像脚本使用 `--entry-token=os-id`，因此条目名会变成 `/boot/efi/loader/entries/fedora-<kernel-release>.conf`，并写入 `/etc/kernel/entry-token` 内容为 `fedora`。
 - Fedora 44 的 `90-loaderentry.install` 会从 `/usr/lib/modules/<kernel-release>/dtb/` 查找设备树，所以 DTB 必须放到这个标准路径里。
 - Fedora 默认的 `51-dracut-rescue.install` 会额外生成 `0-rescue` 启动项，但这个救援项默认不带 `devicetree`，在 gaokun3 上不可用，因此这里显式将其禁用。
 
