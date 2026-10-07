@@ -172,6 +172,13 @@ copy_fw /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcslpi8280.mbn
 copy_fw /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/audioreach-tplg.bin
 copy_fw /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcdxkmsuc8280.mbn
 copy_fw /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcvss8280.mbn
+
+# msm (DRM) loads the Adreno a660 SQE/GPU manager firmware before the panel comes
+# up, so both files must be in the initramfs. They are installed under updates/,
+# which the kernel firmware loader searches before /lib/firmware, so the copy the
+# image seeded there wins over the distribution's firmware-qcom-soc.
+copy_fw /lib/firmware/updates/qcom/a660_gmu.bin
+copy_fw /lib/firmware/updates/qcom/a660_sqe.fw
 EOF
 chmod 0755 /etc/initramfs-tools/hooks/gaokun3-firmware
 

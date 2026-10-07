@@ -33,6 +33,11 @@ cp -a usr %{buildroot}/
 # topology name the sound card asks for are ours.
 /usr/lib/firmware/qcom/sc8280xp/HUAWEI
 /usr/lib/firmware/qcom/sc8280xp/SC8280XP-HUAWEI-GAOKUN3-tplg.bin
+# The Adreno a660 SQE/GPU manager firmware msm needs before the panel comes up.
+# Fedora's qcom-firmware ships qcom/a660_*.xz, so ours live under updates/,
+# which the kernel loader searches first, and never collide with Fedora's paths.
+/usr/lib/firmware/updates/qcom/a660_gmu.bin
+/usr/lib/firmware/updates/qcom/a660_sqe.fw
 
 %changelog
 * Sat Mar 28 2026 cool <bilibili@att.net> - @FW_VERSION@-1

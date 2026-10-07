@@ -48,6 +48,35 @@ HX83121A 是触摸/显示集成芯片。[right 的讨论](https://github.com/rig
 
 若原始命令行已有 `module_blacklist=`，在其逗号列表中追加模块，不重复设置该参数。各轮记录是否出现最初正常画面、花屏时间、全屏还是半屏、是否仍能通过 SSH 登录。禁用模块后可用 `lsmod` 确认它未加载；不要在面板已花屏时在线卸载驱动替代冷启动测试。
 
+## 另一条已确认的花屏路径：缺失 a660 SQE/GPU 管理固件
+
+除上面的 PLL 候选外，现场新内核（含 KernelSU / EL2）还存在一条与源码无关、只与打包有关的确定故障：启动日志出现 `msm_dpu ... failed to load qcom/a660_sqe.fw`，随后花屏。
+
+`msm`（`CONFIG_DRM_MSM=m`）在点亮面板前先调用 `adreno_request_fw()` 加载 `qcom/a660_sqe.fw` 与 `qcom/a660_gmu.bin`。该函数**只**尝试 `qcom/` 前缀路径，失败即返回 `-ENOENT` 并报 `failed to load`，不再回退。而内核固件搜索顺序是：
+
+```
+/lib/firmware/updates/<内核版本>  →  /lib/firmware/updates  →  /lib/firmware/<内核版本>  →  /lib/firmware
+```
+
+旧内核的 `loaded qcom/a660_sqe.fw from new location` 说明文件位于 `/lib/firmware/qcom/a660_sqe.fw`（发行版 `firmware-qcom-soc` 等提供）。新镜像一旦缺少这两个文件，GPU 就无法在显示控制器接管前完成初始化，表现为花屏。
+
+仓库 `firmware/qcom/a660_gmu.bin`、`firmware/qcom/a660_sqe.fw` 自带这两份文件。修复方式是让 `linux-firmware-gaokun3`（DEB 与 RPM）把它们装到 `updates/qcom/`，并写入 initramfs/dracut：
+
+- 装到 `updates/` 而非 `/lib/firmware/qcom/`：内核优先搜索 `updates/`，因此无论发行版（`firmware-qcom-soc`、Ubuntu `linux-firmware-qualcomm-graphics`、Fedora `qcom-firmware`）是否提供这两个文件，仓库自带副本都生效；同时两者不再拥有同一路径，避免 dpkg/rpm 文件冲突。
+- 同时加入 Debian 镜像与固件包的 initramfs hook、RPM 的 dracut `install_items`，因为 `msm` 是模块，可能需要在 initramfs 阶段就取到固件。
+
+### 恢复检查
+
+在新内核上确认固件就位并真正被加载（`uname -r` 为实际内核版本）：
+
+```bash
+uname -r
+ls -l /lib/firmware/updates/qcom/a660_sqe.fw /lib/firmware/updates/qcom/a660_gmu.bin
+sudo journalctl -b -k -o short-monotonic | grep -E 'a660_(sqe|gmu)|adreno_request_fw'
+```
+
+期望看到 `loaded qcom/a660_sqe.fw from new location` 与 `loaded qcom/a660_gmu.bin from new location`，且没有 `failed to load qcom/a660_*`。若 `updates/qcom/` 下缺失文件，说明 `linux-firmware-gaokun3` 未安装或版本过旧；若文件存在但仍报 `failed to load`，再回到本文上半部分的 PLL / 触摸 / DSC 对照测试继续排查。
+
 ## 收集证据
 
 故障启动可临时去掉 `quiet rhgb`，追加 `drm.debug=0x1ff log_buf_len=4M`。进入系统后（可通过 SSH）保存完整日志，不只截取含 error 的行：

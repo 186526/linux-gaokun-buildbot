@@ -47,6 +47,7 @@ The package pipeline builds and installs dedicated package sets:
 - **Optional EL2 variants**: `*-gaokun3-el2` package set for the second EL2 kernel build
 - Debian/Ubuntu kernel image packages run `update-initramfs` during install/upgrade, which in turn refreshes the BLS entry through the distro `systemd-boot` hook. Versioned package names allow diagnostic and current kernels to remain installed together.
 - Fedora kernel RPMs now ship a matching `dracut.conf.d` snippet and run `dracut` + `kernel-install add` in `%posttrans`, so installing or upgrading the package refreshes the initramfs and BLS entry automatically.
+- `linux-firmware-gaokun3` (DEB and RPM) ships the repository's Adreno `qcom/a660_gmu.bin` and `qcom/a660_sqe.fw` under `updates/qcom/`. The kernel firmware loader searches `updates/` before `/lib/firmware`, so these copies win over the distribution's `firmware-qcom-soc` / `linux-firmware-qualcomm-graphics` / `qcom-firmware` without colliding with their paths. This is required for the display: `msm` loads `qcom/a660_sqe.fw` before the panel comes up, and a missing file fails with `msm_dpu ... failed to load qcom/a660_sqe.fw` and a corrupted screen.
 
 ### Releases
 

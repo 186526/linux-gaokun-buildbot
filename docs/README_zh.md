@@ -34,6 +34,7 @@
 - **EL2 暂停构建**：等待独立迁移与验证；请求 EL2 构建会提前报错。
 - Ubuntu 内核镜像包在安装/升级时运行 `update-initramfs`，进而通过发行版的 `systemd-boot` 钩子刷新 BLS 条目。
 - Fedora 内核 RPM 现自带匹配的 `dracut.conf.d` 片段，并在 `%posttrans` 中运行 `dracut` + `kernel-install add`，因此安装或升级软件包会自动刷新 initramfs 和 BLS 条目。
+- `linux-firmware-gaokun3`（DEB 与 RPM）把仓库自带的 Adreno 固件 `qcom/a660_gmu.bin`、`qcom/a660_sqe.fw` 安装到 `updates/qcom/`。内核固件加载器先搜索 `updates/` 再搜索 `/lib/firmware`，因此仓库副本优先生效，又不与发行版的 `firmware-qcom-soc` / `linux-firmware-qualcomm-graphics` / `qcom-firmware` 争抢路径。这是显示正常所必需的：`msm` 在点亮面板前加载 `qcom/a660_sqe.fw`，缺失时会报 `msm_dpu ... failed to load qcom/a660_sqe.fw` 并导致花屏。
 
 ### Release 产物
 

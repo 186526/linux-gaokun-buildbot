@@ -237,6 +237,16 @@ build_firmware_package() {
     "$firmware_stage/lib/firmware/qcom/sc8280xp/"
   ln -s HUAWEI/gaokun3/audioreach-tplg.bin \
     "$firmware_stage/lib/firmware/qcom/sc8280xp/SC8280XP-HUAWEI-GAOKUN3-tplg.bin"
+  # msm (DRM) loads the Adreno a660 SQE/GPU manager firmware before the panel
+  # comes up; a missing qcom/a660_sqe.fw is what leaves the display controller
+  # without its GPU and corrupts the screen. Ship the repository copies under
+  # updates/, which the kernel firmware loader searches before /lib/firmware, so
+  # this package overrides whatever firmware-qcom-soc provides without either
+  # package owning the same path.
+  install -Dm644 "$GAOKUN_DIR/firmware/qcom/a660_gmu.bin" \
+    "$firmware_stage/lib/firmware/updates/qcom/a660_gmu.bin"
+  install -Dm644 "$GAOKUN_DIR/firmware/qcom/a660_sqe.fw" \
+    "$firmware_stage/lib/firmware/updates/qcom/a660_sqe.fw"
   cp "$GAOKUN_DIR/packaging/deb/linux-firmware-gaokun3/hooks/initramfs-hook.in" \
     "$firmware_stage/etc/initramfs-tools/hooks/gaokun3-firmware"
   chmod 0755 "$firmware_stage/etc/initramfs-tools/hooks/gaokun3-firmware"
