@@ -19,7 +19,7 @@ FEDORA_RELEASE=44
 UBUNTU_RELEASE=26.04
 ```
 
-`scripts/lib/kernel_source.sh` clones exactly that commit (`git fetch --depth=1`, detached HEAD) and refuses to continue when the checkout is at another commit or contains local edits or untracked files. `KERNEL_TAG` is only a naming label; the commit is what is checked out. EL2 is paused: `KERNEL_EL2_COMMIT` is empty and `build.sh` refuses a requested `BUILD_EL2=true` build until a reviewed EL2 commit is pinned.
+`scripts/lib/kernel_source.sh` clones exactly that commit (`git fetch --depth=1`, detached HEAD) and refuses to continue when the checkout is at another commit or contains local edits or untracked files. `KERNEL_TAG` is only a naming label; the commit is what is checked out. The pinned Gaokun3 tree already contains device drivers, DTS files, and `gaokun3_defconfig`, so the build does not replay the legacy device patch series on it. `KERNEL_BASE=xanmod` selects the separate XanMod tree at `KERNEL_XANMOD_TAG` (default `7.2.9-xanmod1`) and applies the repository patch series with XanMod overrides. EL2 is patch-based; `KERNEL_EL2_COMMIT` remains empty and is not required for `BUILD_EL2=true`.
 
 ## What is included
 
@@ -27,8 +27,8 @@ UBUNTU_RELEASE=26.04
 
 - `build.sh`: local build entry point (`./build.sh kernel|debs|rpms`); sources `build.env` and prepares the pinned kernel checkout
 - `build.env`: reviewed, pinned build inputs (kernel repository, tag, commit, EL2 commit, distro releases)
-- `patches/`: the device patch series applied on top of the pinned kernel, plus `patches/kernelsu/PINNED_REVISION.md`
-- `defconfig/`, `dts/`: mirrors of the DTS files and `gaokun3_defconfig` embedded in `patches/0099` (the build applies the patch, not these directories)
+- `patches/`: device patches applied to XanMod, EL2 patches, and the pinned KernelSU revision
+- `defconfig/`, `dts/`: review mirrors of the device files maintained in the pinned `gaokun3/linux` tree
 - `docs/`: bilingual usage/build guides and platform notes
 - `firmware/`: minimal firmware bundle used by the image build
 - `packaging/`: distro kernel and firmware package templates and metadata
@@ -55,14 +55,16 @@ The package pipeline builds and installs dedicated package sets:
 
 ### Kernel patches
 
-The pinned kernel already carries most of the device enablement. The build applies the remaining patches on top of it, per series and in filename order:
+The pinned Gaokun3 kernel contains its device drivers, DTS, and defconfig. The build applies the legacy device patch series only to XanMod; the pinned Gaokun3 build does not replay those patches. For XanMod, the series are applied in filename order:
 
-- `patches/upstream/*` (`0024`, `0025`): USB UCSI `huawei_gaokun` port initialization and event handling, and the Gaokun3 ADSP heap and device-support correction.
-- `patches/others/*` (`0007`–`0012`): SC8280XP display clock parking and rate-parent fixes, the force-GSI-mode property for `spi-qcom-geni`, virtual fbdev screen buffer, DPU DSC interface data width, and panel orientation for `himax-hx83121a`.
-- `patches/media/*` (`0001`, `0004`, `0005`, `0007`): SC8280XP Venus resource structs, adapted from the [jhovold/linux](https://github.com/jhovold/linux/commits/wip/sc8280xp-6.16) Venus series.
-- `patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch`: imports this repository's DTS files and `gaokun3_defconfig`. The patch is self-contained and is the authoritative copy of `dts/` and `defconfig/`.
-- `patches/el2/*` (`0006`, `0011`): remoteproc restart of detached remoteprocs and the Qualcomm SCM shared-memory bridge VMID binding. Adapted from [TravMurav/linux](https://github.com/TravMurav/linux/tree/x13s-6.18-v1.1-cxsd), currently paused.
-- `patches/xanmod/*`: base-local overrides for the [XanMod](https://gitlab.com/xanmod/linux) base (`kernel_base=xanmod`). A same-name file replaces the shared patch (for example `patches/xanmod/0099-...`); files with no shared counterpart (`patches/xanmod/upstream/0018-...`, `patches/xanmod/others/0018-...`, `patches/xanmod/media/0006-...`, `patches/xanmod/el2/0009,0010,0016-...`) are applied only on that base. A patch that is already present in the base tree is skipped automatically when `git apply --reverse --check` succeeds.
+- `patches/upstream/*`: Gaokun3 UCSI, EC, ADSP, and HI846 support adapted to the XanMod source.
+- `patches/others/*`: display clock, SPI GSI, fbdev, DSC interface width, and panel orientation fixes.
+- `patches/media/*`: SC8280XP Venus resources, adapted from the [jhovold/linux](https://github.com/jhovold/linux/commits/wip/sc8280xp-6.16) Venus series.
+- `patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch`: imports the device DTS and `gaokun3_defconfig` for XanMod.
+- `patches/el2/*`: remoteproc restart of detached remoteprocs and Qualcomm SCM shared-memory bridge changes, with XanMod-specific EL2 overrides.
+- `patches/xanmod/*`: base-specific replacements and additions, including the bonded DSI PLL fix, touchscreen PDC mapping fix, and Venus DTS adaptation. A patch is skipped only when reverse-apply validation or a patch-specific set of target-file anchors confirms that its change is already present.
+
+With `BUILD_EL2=true`, the EL2 series is applied to a separate source snapshot so standard packages use the unmodified standard tree.
 - **[Optional]** `patches/kernelsu/PINNED_REVISION.md`: records the pinned upstream KernelSU revision. KernelSU is not vendored; when `BUILD_KERNELSU=true` the build clones `https://github.com/tiann/KernelSU.git` at `v3.3.0` (`932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e`) and wires it into the kernel tree before configuration, so both the standard and EL2 variants include KernelSU.
 
 ### Tool Sources

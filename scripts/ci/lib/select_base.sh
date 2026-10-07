@@ -42,6 +42,7 @@ xanmod_change_is_present() {
       target_file="drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c"
       anchors+=('#include <drm/display/drm_dsc_helper.h>')
       anchors+=('timing->width = timing->width * drm_dsc_get_bpp_int(dsc) /')
+      anchors+=('timing->dce_bytes_per_line = msm_dsc_get_bytes_per_line(dsc);')
       ;;
     *)
       return 1

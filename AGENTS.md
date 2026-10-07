@@ -13,9 +13,9 @@ KERNEL_COMMIT=73033564068250603f5b2150c408554faaf22d66
 KERNEL_EL2_COMMIT=
 ```
 
-`scripts/lib/kernel_source.sh:prepare_kernel_source` clones exactly that commit (`git fetch --depth=1`, detached) and refuses to continue when the checkout is at a different commit or contains local edits or untracked files. The kernel is never reset or re-patched in place; patches are applied on top of the pinned checkout.
+`scripts/lib/kernel_source.sh:prepare_kernel_source` clones exactly that commit (`git fetch --depth=1`, detached) and refuses to continue when the checkout is at a different commit or contains local edits or untracked files. The pinned Gaokun3 tree already contains device drivers, DTS files, and `gaokun3_defconfig`; build scripts do not replay the legacy device patch series on it. `KERNEL_BASE=xanmod` instead fetches XanMod at `KERNEL_XANMOD_TAG` (default `7.2.9-xanmod1`) and applies repository patches with the XanMod overrides.
 
-The supported image boot path uses `systemd-boot`, `kernel-install`, and Boot Loader Specification (BLS) entries. The standard kernel can be accompanied by an optional EL2 kernel variant with `CONFIG_LOCALVERSION` set to `-gaokun3-el2` and additional EL2 EFI payloads. EL2 is currently paused: `KERNEL_EL2_COMMIT` is empty and `build.sh` aborts a requested `BUILD_EL2=true` build until a reviewed EL2 commit is pinned.
+The supported image boot path uses `systemd-boot`, `kernel-install`, and Boot Loader Specification (BLS) entries. The standard kernel can be accompanied by an optional EL2 kernel variant with `CONFIG_LOCALVERSION` set to `-gaokun3-el2` and additional EL2 EFI payloads. EL2 is patch-based: `BUILD_EL2=true` applies `patches/el2` and does not require `KERNEL_EL2_COMMIT`.
 
 The repository has no `package.json`, `pyproject.toml`, `Cargo.toml`, Go module, or Makefile. It does have a small Python unit-test suite under `tests/`. The implementation is primarily Bash, Linux kernel C/DTS source, Debian control templates, RPM spec templates, Python utilities, systemd units, and GitHub Actions workflows.
 
@@ -23,11 +23,11 @@ The repository has no `package.json`, `pyproject.toml`, `Cargo.toml`, Go module,
 
 - `build.sh`: local build entry point (`./build.sh kernel|debs|rpms`); sources `build.env` and `scripts/lib/kernel_source.sh`, prepares the pinned source tree, then runs the kernel-variant and package scripts.
 - `build.env`: reviewed, pinned build inputs (kernel repository, tag, commit, EL2 commit, distro releases). Change it in a commit together with adaptation notes.
-- `patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch`: imports the repository's local DTS and defconfig into the kernel tree. The patch is self-contained and is the authoritative copy of the files under `dts/` and `defconfig/`.
-- `patches/upstream/`: patches intended for the mainline Linux base (`0024`, `0025`).
-- `patches/others/`: display clock and SPI changes plus DRM/panel fixes (`0007`–`0012`): dispcc-sc8280xp mdp_clk_src parking and `CLK_SET_RATE_PARENT`, `spi-qcom-geni` force-GSI mode, `drm/msm` fbdev screen buffer, `drm/msm/dpu` DSC interface data width, and `drm/panel: himax-hx83121a` orientation. EC and device-support work lives in `patches/upstream/0025` and `patches/0099`, not here.
-- `patches/media/`: SC8280XP Qualcomm Venus media support patches (`0001`, `0004`, `0005`, `0007`).
-- `patches/el2/`: optional EL2 boot and remoteproc/SCM patches (`0006`, `0011`). Paused.
+- `patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch`: imports local DTS and defconfig files into XanMod; the pinned `gaokun3/linux` tree already contains these files.
+- `patches/upstream/`: Gaokun3 UCSI, EC, ADSP, and HI846 changes applied to XanMod.
+- `patches/others/`: display clock, SPI GSI, fbdev, DSC interface width, and panel fixes applied to XanMod.
+- `patches/media/`: SC8280XP Qualcomm Venus support patches applied to XanMod.
+- `patches/el2/`: optional EL2 boot and remoteproc/SCM patches; XanMod-specific replacements are under `patches/xanmod/el2/`.
 - `patches/kernelsu/PINNED_REVISION.md`: records the pinned upstream KernelSU revision. KernelSU is not vendored.
 - `patches/xanmod/`: base-local overrides used when `KERNEL_BASE=xanmod`. A file with the same basename replaces the shared patch; extra files exist only for XanMod.
 - `defconfig/gaokun3_defconfig`: arm64 kernel configuration mirror. It must match the `gaokun3_defconfig` embedded in `patches/0099`; the patch, not this directory, is what the build applies.
@@ -62,7 +62,7 @@ Note: `drivers/` and `tools/monitors/` no longer exist; the EC, panel, and touch
 The build is a staged shell pipeline:
 
 1. `./build.sh <action>` sources `build.env`, prepares the pinned kernel checkout, and exports the environment consumed by the CI scripts.
-2. `scripts/ci/20_build_kernel_variants.sh` resolves the kernel base (`mainline` or `xanmod`) via `scripts/ci/lib/select_base.sh`, then applies `patches/upstream`, `patches/others`, `patches/media`, and `patches/0099`. It skips a patch when `git apply --reverse --check` shows that the patch is already present. With `KERNEL_BASE=xanmod`, same-name files under `patches/xanmod/` replace the shared patch. With `BUILD_KERNELSU=true`, the pinned KernelSU revision is wired into the tree before configuration. With `BUILD_EL2=true` (currently refused by `build.sh` because `KERNEL_EL2_COMMIT` is unset), it applies the EL2 series, commits the temporary change as `Apply EL2 patches`, and builds a second output directory with `-gaokun3-el2`.
+2. `scripts/ci/20_build_kernel_variants.sh` builds pinned `gaokun3/linux` directly because that tree already contains device drivers, DTS files, and `gaokun3_defconfig`. With `KERNEL_BASE=xanmod`, it applies `patches/upstream`, `patches/others`, `patches/media`, and `patches/0099`; same-name files under `patches/xanmod/` replace shared patches. Known XanMod changes are skipped only when their target file contains all defined fixed-string anchors. With `BUILD_KERNELSU=true`, the pinned KernelSU revision is wired into the tree before configuration. With `BUILD_EL2=true`, it snapshots the prepared source, applies the EL2 series to that separate tree, commits the temporary change as `Apply EL2 patches`, and builds a second output directory with `-gaokun3-el2`; `KERNEL_EL2_COMMIT` is unused for the patch-based EL2 variant.
 3. The kernel build uses `make ... gaokun3_defconfig`, `olddefconfig`, a parallel default build using `-j$(nproc)`, and `modules_prepare`. Outputs are out-of-tree builds under `KERN_OUT` and, when enabled, `KERN_OUT_EL2`.
 4. The DEB or RPM package script stages the kernel image, `System.map`, `.config`, DTB, modules, development tree, and firmware. It emits package files, `package-manifest.json`, and `package-release-body.md` under `ARTIFACT_DIR`.
 5. Image workflows either rebuild those packages or locate an existing package release by a tag prefix, verify the manifest's kernel tag/commit and EL2 state, and download the package assets.
@@ -82,7 +82,7 @@ The pinned entry point is `build.sh`:
 ./build.sh rpms     # build the kernel and RPM packages
 ```
 
-Inputs come from `build.env`. `WORKDIR` selects the output directory (default `./build`); `KERN_SRC` points at an existing, clean checkout that must match the pinned commit exactly; `KERN_SRC_EL2`, `KERN_OUT`, and `KERN_OUT_EL2` override the EL2 and output paths. `BUILD_EL2=true` requires `KERNEL_EL2_COMMIT` and otherwise aborts. `BUILD_KERNELSU=true` wires the pinned KernelSU revision into the tree.
+Inputs come from `build.env`. `WORKDIR` selects the output directory (default `./build`); for the default base, `KERN_SRC` must match the pinned commit exactly and be clean. With `KERNEL_BASE=xanmod`, `build.sh` fetches `KERNEL_XANMOD_TAG` (default `7.2.9-xanmod1`) and refuses to overwrite an existing source directory. `KERN_SRC_EL2`, `KERN_OUT`, and `KERN_OUT_EL2` override the EL2 and output paths. `BUILD_EL2=true` uses the reviewed patch series and does not require `KERNEL_EL2_COMMIT`. `BUILD_KERNELSU=true` wires the pinned KernelSU revision into the tree.
 
 The legacy interactive helper `scripts/local/build_kernel.sh` still exists for on-device Ubuntu or Fedora hosts. It defaults to:
 
