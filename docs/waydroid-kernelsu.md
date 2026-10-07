@@ -187,9 +187,19 @@ EL2:      7.2.9-gaokun3-el2-ksu-dsi-fix-xanmod1
 - EL2 remoteproc `0006`、`0009`、`0010`、`0016`，以及补齐 `qcom_q6v5_read_smp2p_state()` 的 Qualcomm detached-state 前置补丁；
 - `CONFIG_KSU=y`、`CONFIG_KSU_DEBUG=y`、`CONFIG_KPROBES=y`、`CONFIG_TRACEPOINTS=y`、`CONFIG_FTRACE=y`。
 
-最终 DEB 已在本地生成，manifest 标记为 `build_el2=true` 和 `build_kernelsu=true`。目标机在最终包安装前再次离线，因此该版本尚未安装或启动，Manager 识别和 root 结果仍待目标机恢复 SSH 后验证。不能使用此前缺少 XanMod `0018` 的旧内核验证显示或 KernelSU。
+DEB 已在本地生成，manifest 标记为 `build_el2=true` 和 `build_kernelsu=true`。为与目标机已有同名包隔离，本次构建把 EL2 的 `LOCALVERSION` 覆盖为独立后缀，得到 release `7.2.9-gaokun3-el2-ksu-waydroidtest-xanmod1`；`scripts/ci/20_build_kernel_variants.sh` 因此新增 `KERN_LOCALVERSION_EL2` 变量，默认值保持 `-gaokun3-el2`。
 
-目标机恢复后，使用容器命令读取 Manager UID。目标机的 Waydroid Python CLI 会把部分 Android 短参数错误解析为自身参数，因此使用 `lxc-attach`：
+该隔离 EL2 内核已安装并启动，实测结果：
+
+- 内核配置含 `CONFIG_KSU_DEBUG=y`；`/sys/module/kernelsu/parameters/ksu_debug_manager_appid` 存在。
+- 用 `lxc-attach -u <manager-appid>` 以管理器自身 UID 运行 `libksud.so debug info`，返回 `flags: 0x2`（`MANAGER` 位），说明内核已承认调用方为管理器。
+- 以同一 UID 运行 `libksud.so debug su`（无参数，交互式），通过标准输入执行 `id`，输出 `uid=0(root) gid=0(root)`，内核日志同时出现 `KernelSU: allow root for: <manager-appid>`。
+
+`debug su` 必须由管理器 UID 调用。内核 `is_manager()` 判断的是 `uid % 100000 == manager_appid`，因此以 uid 0 直接调用会被拒绝，这是 KernelSU 的正常判定，不代表失败。
+
+管理器的图形界面在本次 Waydroid 中仍无法通过 `am start` 拉起：`Activity` 无法解析，包状态为 `stopped=true`、`notLaunched=true`，解析表内组件存在但查询无结果。该现象属于 Waydroid 侧的应用安装/包扫描状态问题，与内核 KernelSU 的识别和 root 授权是两件事，故本次以 CLI 证据作为内核能力验收。
+
+管理器 UID 会随 APK 重装变化。使用容器命令读取，目标机的 Waydroid Python CLI 会把部分 Android 短参数错误解析为自身参数，因此使用 `lxc-attach`：
 
 ```bash
 sudo lxc-attach -P /var/lib/waydroid/lxc -n waydroid -- \
@@ -206,14 +216,16 @@ sudo lxc-attach -P /var/lib/waydroid/lxc -n waydroid -- \
 waydroid app launch me.weishu.kernelsu
 ```
 
-最后必须验证实际 root 请求：
+以管理器 UID 运行 CLI，验证内核识别与实际 root：
 
 ```bash
-sudo lxc-attach -P /var/lib/waydroid/lxc -n waydroid -- \
-  /system/bin/su -c id
+sudo lxc-attach -P /var/lib/waydroid/lxc -n waydroid -u "$appid" -- \
+  /system/bin/sh -c "$libksud debug info"
+sudo lxc-attach -P /var/lib/waydroid/lxc -n waydroid -u "$appid" -- \
+  /system/bin/sh -c "echo id | $libksud debug su"
 ```
 
-上述命令中的 `10147` 只适用于本次目标机当前安装状态；重新安装 Manager 后必须重新读取 appid。Manager 界面识别成功、内核日志不再出现 `GRANT_ROOT` 的 `permission denied`，并且 `su -c id` 返回 `uid=0(root)` 后，才能宣称 Manager 已经可用。
+其中 `$appid` 来自 `packages.list`，`$libksud` 是容器内 `me.weishu.kernelsu` 的 `lib/arm64/libksud.so` 绝对路径。验收标准是 `debug info` 的 `flags` 含 `0x2`，且 `debug su` 输出 `uid=0(root)`。只把 `am force-stop` 与 `waydroid app launch` 作为尝试重建管理器进程的手段；若 `Activity` 无法解析，改用上面的 CLI 直接验证内核能力，不要据此判定 KernelSU 失败。
 
 验证内核仍然包含 KernelSU：
 
@@ -229,6 +241,22 @@ grep -E 'ksu_supercall|ksu_seccomp|kernelsu_init' /proc/kallsyms
 ```
 
 修复后曾出现一次 `waydroid app launch` 返回 `-1`，并且 session 状态变为 `Container: FROZEN`。该现象没有伴随新的 `libksud.so` 或 syscall `142` 日志，属于 Waydroid 图形 session 或应用启动状态问题，与原始 KernelSU seccomp 拦截问题分开处理。
+
+## 标准内核编译了 KernelSU 却不可用
+
+目标机保留的标准内核 `7.2.9-gaokun3-xanmod1` 确实编入了 KernelSU，但不可用，原因是构建时间早于开启调试配置的提交：
+
+```text
+CONFIG_KSU=y
+CONFIG_KPROBES=y
+CONFIG_TRACEPOINTS=y
+# CONFIG_KSU_DEBUG is not set
+```
+
+- 该包内 `config` 文件时间为 `2026-10-07 04:03`，而本仓库给 `scripts/ci/lib/kernelsu.sh` 打开 `CONFIG_KSU_DEBUG=y` 的提交 `1aa0b47` 时间为 `2026-10-07 14:51`。因此该内核是用“只开 `KSU`+`KPROBES`+`FTRACE`、未开 `KSU_DEBUG`”的旧配置构建的。
+- 没有 `CONFIG_KSU_DEBUG` 时，`/sys/module/kernelsu/parameters/` 不存在，无法设置 `ksu_debug_manager_appid`；同时 `allow_shell` 编译期为 false，`on_post_fs_data` 触发的管理器自动加冕在这台机上从未出现（启动日志无 `Searching manager`、`Crowning manager`、`Found new base.apk`）。任何 `GRANT_ROOT`（`0x4b01`）都会返回 `permission denied`，管理器因此显示未安装，容器内也没有 `su`。
+
+结论：这是构建配置问题，不是内核代码缺陷。用当前仓库脚本以 `BUILD_KERNELSU=true` 重新构建标准内核即可带上 `CONFIG_KSU_DEBUG=y`，再写入 `ksu_debug_manager_appid` 即可让标准内核同样识别并使用管理器。当前 `scripts/ci/lib/kernelsu.sh` 的 `configure_kernel_su` 已经会启用并断言 `CONFIG_KSU_DEBUG=y`。
 
 ## 回滚
 
