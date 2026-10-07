@@ -258,6 +258,100 @@ CONFIG_TRACEPOINTS=y
 
 结论：这是构建配置问题，不是内核代码缺陷。用当前仓库脚本以 `BUILD_KERNELSU=true` 重新构建标准内核即可带上 `CONFIG_KSU_DEBUG=y`，再写入 `ksu_debug_manager_appid` 即可让标准内核同样识别并使用管理器。当前 `scripts/ci/lib/kernelsu.sh` 的 `configure_kernel_su` 已经会启用并断言 `CONFIG_KSU_DEBUG=y`。
 
+需要澄清：`CONFIG_KSU_DEBUG` 只恢复了“手动”路径。自动加冕（`on_post_fs_data` 触发的管理器发现与 `execve` 钩子）的根因是缺少 `CONFIG_KALLSYMS_ALL`，见下一节。
+
+## 自动加冕失效的根因：缺少 CONFIG_KALLSYMS_ALL
+
+上一节记录的 `CONFIG_KSU_DEBUG=y` 重构建只解决手动路径。它没有恢复“自动加冕”——`on_post_fs_data` 触发的管理器发现与 `execve` 钩子在这台标准内核上从未运行。根因是内核配置缺少 `CONFIG_KALLSYMS_ALL`。
+
+### 关键证据
+
+标准内核 `7.2.9-gaokun3-xanmod1` 的 `/boot/config-*` 只有 `CONFIG_KALLSYMS=y`，没有 `CONFIG_KALLSYMS_ALL`：
+
+```text
+CONFIG_KALLSYMS=y
+# CONFIG_KALLSYMS_ALL is not set
+```
+
+因此 `/proc/kallsyms` 中检索不到数据段符号，`sys_call_table` 和 `jiffies` 均出现 0 次：
+
+```text
+sys_call_table   0
+jiffies          0
+```
+
+启动日志显示 KernelSU 尝试解析 syscall 表但失败：
+
+```text
+KernelSU: sys_call_table=0x0
+KernelSU: (syscall hook 注册)
+```
+
+并且缺少以下自动加冕链路日志：
+
+```text
+dispatcher installed at slot ...
+exec zygote, /data prepared, ...
+on_post_fs_data!
+Searching manager...
+Crowning manager: ...
+Found new base.apk at path: ..., is_manager: ...
+```
+
+### 机制
+
+`CONFIG_KALLSYMS_ALL` 决定链接期 `scripts/link-vmlinux.sh` 是否给 `scripts/kallsyms` 传入 `--all-symbols`：
+
+```sh
+if is_enabled CONFIG_KALLSYMS_ALL; then
+    kallsymopt="${kallsymopt} --all-symbols"
+fi
+```
+
+不带 `--all-symbols` 时，`scripts/kallsyms.c` 的 `symbol_valid()` 会丢弃所有不在 `.text`/`.init.text` 范围内的符号，只保留函数符号。`sys_call_table`（`arch/arm64/kernel/sys.c` 中数据段的函数指针数组）与 `jiffies`（`include/linux/jiffies.h` 声明的数据段变量）都不在 text 范围，因此不进入 `kallsyms`，`kallsyms_lookup_name()` 也查不到。
+
+KernelSU v3.3.0（pin `932014ab`）依赖这些符号：
+
+- `kernel/infra/symbol_resolver.c` 用 `kallsyms_lookup_name()` / `kallsyms_on_each_match_symbol()` 解析符号；
+- `kernel/hook/arm64/syscall_hook.c` 的 `ksu_syscall_hook_init()` 解析 `sys_call_table`，失败时打印 `sys_call_table=0x0` 并直接 `return`，于是不会调用 `ksu_syscall_table_hook()`，也就没有 `dispatcher installed at slot`；
+- `dispatcher` 与 `execve` 钩子（`kernel/hook/syscall_event_bridge.c`）都注册在这个 syscall 表槽位上；
+- 没有 `execve` 钩子，就不会在 zygote 启动时命中 `kernel/runtime/ksud_integration.c` 的 `exec zygote` 分支，也就不会调用 `on_post_fs_data()`；
+- `on_post_fs_data()`（`kernel/runtime/boot_event.c`）才是 `ksu_observer_init()` 与 `ksu_throne_tracker_init()` 的触发点，缺它就没有 `Searching manager` / `Crowning manager` / `Found new base.apk`。
+
+这是一条从“符号不可见”到“自动加冕不发生”的完整因果链：缺少 `CONFIG_KALLSYMS_ALL` 导致 `sys_call_table` 解析失败，`execve` 钩子未安装，`on_post_fs_data` 不触发，管理器永远不会被自动加冕。
+
+### 修复
+
+在权威配置来源中启用以下三项：
+
+```text
+CONFIG_KALLSYMS=y
+# CONFIG_KALLSYMS_SELFTEST is not set
+CONFIG_KALLSYMS_ALL=y
+```
+
+`KALLSYMS_ALL` 依赖 `DEBUG_KERNEL && KALLSYMS`；本 defconfig 已有 `CONFIG_DEBUG_KERNEL=y`，因此需将 `KALLSYMS` 与 `KALLSYMS_ALL` 一并写入，并放在内核生成的规范顺序中（`CONFIG_SYSFS_SYSCALL=y` 之后、`CONFIG_PROFILING=y` 之前）。`CONFIG_KALLSYMS_SELFTEST` 显式关闭，保持与内核 `olddefconfig` 输出一致。
+
+需要同步的三处：
+
+- `patches/xanmod/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch`（XanMod 构建实际使用，同名 override 优先）；
+- `patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch`（mainline 一致性）；
+- `defconfig/gaokun3_defconfig`（镜像文件，与 patch 内容保持字节一致）。
+
+标准与 EL2 变体共用同一 `gaokun3_defconfig`，因此该修复对两者同时生效。
+
+### CONFIG_KSU_DEBUG 的定位
+
+`CONFIG_KSU_DEBUG` 只是调试兜底，不是交付前提：
+
+- 它在 `kernel/manager/apk_sign.c` 下暴露 `ksu_debug_manager_appid` 参数，并让 `allow_shell`（`kernel/core/init.c`）默认为 true；
+- 写入 appid 后，`GRANT_ROOT`（`0x4b01`）的手动路径可用；
+- 它不修复 `sys_call_table` 解析，因此不会恢复自动加冕。
+
+把 `CONFIG_KSU_DEBUG=y` 当作根因修复会掩盖真正的符号可见性问题。根因修复是启用 `CONFIG_KALLSYMS_ALL=y`；`CONFIG_KSU_DEBUG=y` 仅在需要手动指定管理器 appid 时作为调试手段保留。
+
+本节的“关键证据”来自标准内核 `7.2.9-gaokun3-xanmod1` 现有的 `/boot/config-*`、`/proc/kallsyms` 与启动日志，以及 KernelSU pin 版源码；仓库侧改动仅完成静态验证，尚未在目标机上重新构建并启动带 `CONFIG_KALLSYMS_ALL=y` 的内核，因此不声明该修复已在目标机实测生效。
+
 ## 回滚
 
 使用实际备份后缀恢复两份文件：
