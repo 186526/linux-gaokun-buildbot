@@ -2,6 +2,8 @@
 
 实机反馈：用户报告 PLL 测试版本看起来已解决花屏，TTY 可切换；仍有服务启动及 nmtui 问题，转入 rootfs 排查。这不是全部显示功能、休眠或其他机型的验收结论。
 
+> 本文是固定内核迁移前的排查记录。所引用的候选/基线 SHA 属于当时的检出版本；当前检出由 `build.env` 的 `KERNEL_COMMIT=73033564068250603f5b2150c408554faaf22d66` 决定。
+
 用户报告开机约 1–2 秒后花屏，横屏看是下半屏；禁用触摸和关闭 DSC 两项测试均无效，回忆 7.2.3 正常。以下检查针对候选内核 `1ab894b42deae74cc72cc89f2cb436534260faed`、stable 基线 `d396b05e7e39b0ed6f6d5553fbaf174228e18bdf`。尚未收到故障机日志、实际内核 SHA 或最后正常内核的构建来源，不能确认根因。此前 CI 成功只代表构建成功，该候选不能视为显示已验收。
 
 ## 7.2.3 到 7.2.6：已找到匹配的回归候选
@@ -14,7 +16,7 @@ Gaokun3 的原生竖屏由双 DSI 分区驱动，旋转后其中一部分可能�
 
 独立测试分支 `test/gaokun3-pll-7.2.6` 仅在 `1ab894b42` 上重用 Neil Armstrong 的原上游 `93c97bc8d85d`。两个文件的 blob SHA 恢复为上述 7.2.3–7.2.5 的值，未引入新的驱动逻辑。原补丁作者和签署记录保留，提交附加本次排查依据；没有新增代签。
 
-本地验证：`dsi_phy_7nm.o` AArch64 `W=1` 编译通过，无警告；checkpatch 为 0 errors / 0 warnings；文件内容与旧 stable 的 blob SHA 一致。尚未实机复现或确认修复。完整 RPM/镜像验证由独立测试分支构建，正式候选 `gaokun3-next` / buildbot `next` 不因该试验自动更新。
+本地验证：`dsi_phy_7nm.o` AArch64 `W=1` 编译通过，无警告；checkpatch 为 0 errors / 0 warnings；文件内容与旧 stable 的 blob SHA 一致。尚未实机复现或确认修复。完整 RPM/镜像验证由独立测试分支构建，迁移前的正式候选分支不因该试验自动更新。
 
 测试此镜像时恢复原始启动参数，去掉上轮临时禁用触摸、关闭 DSC 的参数，以便只对比 PLL 补丁。原补丁有已知单 DSI 回归，因此此分支只用于 Gaokun3 A/B 测试，不推广到其他机型。
 
@@ -57,6 +59,6 @@ lsmod >> gaokun-display-system.txt
 sudo journalctl -b -k -o short-monotonic > gaokun-display-boot.log
 ```
 
-从备用内核启动后，若上次故障启动日志已持久保存，改用 `journalctl -b -1 -k -o short-monotonic`。`uname -a` 的 `7.2.6-gaokun3+` 不能区分所有候选，还需记录下载的 Actions run / package-manifest.json 中的内核 SHA。
+从备用内核启动后，若上次故障启动日志已持久保存，改用 `journalctl -b -1 -k -o short-monotonic`。`uname -a` 的版本后缀不能区分所有候选，还需记录下载的 Actions run / package-manifest.json 中的内核 SHA，并与 `build.env` 的 `KERNEL_COMMIT` 对照。
 
 最少需要：故障内核来源、最后正常的内核版本、花屏照片或视频、以上日志，以及禁用触摸/关闭 DSC 两次独立测试结果。得到结果后选择一个已有补丁测试，并保留原候选供回退；在此之前不宣称已修复。

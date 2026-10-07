@@ -18,9 +18,8 @@ English | [中文](matebook_ego_build_guide_ubuntu26.04_zh.md)
 
 This document uses content already in the project, no need to obtain additional device-specific repositories:
 
-- `patches/`
-- `defconfig/`
-- `dts/`
+- `patches/` (the device patch series applied on top of the pinned kernel)
+- `defconfig/`, `dts/` (mirrors of the DTS files and `gaokun3_defconfig` embedded in `patches/0099`; the build applies the patch, not these directories)
 - `tools/`
 - `firmware/`
 
@@ -47,13 +46,15 @@ Prepare source and working directory:
 mkdir -p ~/gaokun/matebook-build-ubuntu
 
 cd ~/gaokun
-# Get specified version of Linux mainline source
-if [ ! -d "mainline-linux" ]; then
-    git clone --depth 1 --branch v7.2-rc2 \
-        https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git \
-        mainline-linux
+# Get the pinned downstream kernel at the commit recorded in build.env
+if [ ! -d "gaokun3-linux" ]; then
+    git clone https://github.com/gaokun3/linux.git gaokun3-linux
+    git -C gaokun3-linux fetch --depth=1 origin 73033564068250603f5b2150c408554faaf22d66
+    git -C gaokun3-linux checkout --detach FETCH_HEAD
 fi
 ```
+
+> Correction: the kernel input is pinned by `build.env` to `gaokun3/linux` at `73033564068250603f5b2150c408554faaf22d66`, not to the `torvalds/linux` `v7.2-rc2` tag. For a reproducible build use `./build.sh kernel|debs|rpms` instead.
 
 Set environment variables:
 
@@ -248,7 +249,7 @@ ccache -s
 
 > **KernelSU and the EL2 build.** KernelSU is wired into the tree rather than committed as a patch, so `git apply --index` and `git reset --hard` do not manage it. Unwire it before the EL2 transition and re-wire it after, as shown above. Both the standard and the EL2 kernel then contain KernelSU with unchanged release names (`<version>-gaokun3` and `<version>-gaokun3-el2`). Whether KernelSU is built is controlled by the single `BUILD_KERNELSU` flag set in the KernelSU block; both the standard and the EL2 wiring, `.config` enables, and the `CONFIG_KSU=y` assertion are gated on it, so setting `BUILD_KERNELSU=false` turns KernelSU off for both variants and removes any wiring an earlier run left behind, while unrelated edits are preserved and a foreign `drivers/kernelsu` symlink aborts instead of being deleted. This cleanup is defined and called by the KernelSU block, so to get it you must keep the block and set `BUILD_KERNELSU=false` rather than deleting the block. If you delete the whole block, the standard build never cleans up; only do that when the tree has no stale wiring, or remove the symlink and the two Kbuild/Kconfig lines yourself first. This mirrors the helper's `BUILD_KERNELSU` semantics in `scripts/local/build_kernel.sh`. The flag is set and exported by the KernelSU block; if you run the EL2 block in a separate shell, export `BUILD_KERNELSU=true` there too, otherwise it defaults to false and skips KernelSU.
 
-> The interactive helper `scripts/local/build_kernel.sh` automates all of the above (KernelSU wiring, the EL2 transition, and the per-variant `.config` symbols). See the repository `README.md` for its `BUILD_KERNELSU` / `EL2_CHOICE` overrides.
+> The interactive helper `scripts/local/build_kernel.sh` automates all of the above (KernelSU wiring, the EL2 transition, and the per-variant `.config` symbols). It is the legacy path: it clones mainline at `KERNEL_TAG` (default `v7.2-rc2`) rather than the commit pinned in `build.env`. For a reproducible build use `./build.sh kernel|debs|rpms`. See the repository `README.md` for the `BUILD_KERNELSU` / `EL2_CHOICE` overrides.
 
 ---
 
@@ -602,7 +603,7 @@ MACHINE_ID=$(cat /etc/machine-id)
 
 bootctl --no-variables --esp-path=/boot/efi install
 
-kernel-install --make-entry-directory=yes --entry-token=machine-id add \
+kernel-install --make-entry-directory=yes --entry-token=os-id add \
     $KREL /boot/vmlinuz-$KREL /boot/initrd.img-$KREL
 
 if [ -n "$KREL_EL2" ]; then
@@ -620,7 +621,7 @@ EOF
 qcom/sc8280xp-huawei-gaokun3-el2.dtb
 EOF
     KERNEL_INSTALL_CONF_ROOT=$EL2_CONF_ROOT \
-        kernel-install --make-entry-directory=yes --entry-token=machine-id add \
+        kernel-install --make-entry-directory=yes --entry-token=os-id add \
         $KREL_EL2 /boot/vmlinuz-$KREL_EL2 /boot/initrd.img-$KREL_EL2
     rm -rf $EL2_CONF_ROOT
 
@@ -636,7 +637,7 @@ EOF
 fi
 
 cat > /boot/efi/loader/loader.conf <<EOF
-default ${MACHINE_ID}-${KREL}.conf
+default ubuntu-${KREL}.conf
 timeout 5
 console-mode keep
 editor no
@@ -648,8 +649,8 @@ exit
 Notes:
 
 - Instead of manually creating `loader/entries/*.conf`, we let `kernel-install`'s `90-loaderentry.install` auto-generate standard BLS entries.
-- Default uses `--entry-token=machine-id`, so final entry filenames will be `/boot/efi/loader/entries/<machine-id>-<kernel-release>.conf`.
-- Kernel, `initrd` and DTB will be automatically copied to `/boot/efi/<machine-id>/<kernel-release>/`; this is the standard BLS Type #1 directory layout.
+- The image script uses `--entry-token=os-id`, so entry filenames become `/boot/efi/loader/entries/ubuntu-<kernel-release>.conf` and `/etc/kernel/entry-token` is written as `ubuntu`.
+- Kernel, `initrd` and DTB will be automatically copied to `/boot/efi/ubuntu/<kernel-release>/`; this is the standard BLS Type #1 directory layout.
 
 ### 4. Final Cleanup
 

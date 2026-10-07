@@ -1,10 +1,14 @@
 # 内核重启审计（更新于 2026-09-21）
 
-目标是维护可解释的下游 Git 提交，不恢复 buildbot 中的补丁、驱动或 DTS 副本。`gaokun3-next` 是当前 Iris/GSI 审查分支；`gaokun3` 保留上一版候选，两个分支都未通过实机验收。构建使用精确 SHA。
+> 本文是固定内核迁移期间的审计记录。其中的分支名（`gaokun3-next`）与 CI 链接属于迁移前的两仓库布局，保留作为决策依据。当前检出由 `build.env` 决定：`KERNEL_TAG=gaokun3`、`KERNEL_COMMIT=73033564068250603f5b2150c408554faaf22d66`。
+
+目标是维护可解释的下游 Git 提交，不恢复 buildbot 中的补丁、驱动或 DTS 副本。`gaokun3-next` 曾是 Iris/GSI 审查分支；`gaokun3` 保留上一版候选，两个分支都未通过实机验收。构建使用精确 SHA。
 
 2026-09-21：用户报告开机约 1–2 秒后花屏，实际故障内核来源和日志待确认。已针对当前候选核对上游 DSI/PLL 变更及 right 补丁，见[开机花屏排查](display-debug.md)。构建通过不能视为显示已验收。
 
 ## 固定审计输入
+
+> 以下为迁移前的审计基线，不是当前检出。当前检出见 `build.env` 的 `KERNEL_COMMIT=73033564068250603f5b2150c408554faaf22d66`。
 
 - stable 基线：`d396b05e7e39b0ed6f6d5553fbaf174228e18bdf`（v7.2.6）。
 - 上一版候选：`716c79802092955347a41975b8f6e14020321478`。
@@ -52,9 +56,11 @@ right main 的传输/生命周期改动包括 `0bbd872`（burst 模式）、`acc
 
 ## 验证边界
 
-上一版 `716c798` 已通过完整内核编译及 DEB/RPM 打包（[Actions 35481647905](https://github.com/gaokun3/buildbot/actions/runs/35481647905)）；该结果验证双仓库构建流程，不能替代新 Iris 候选验证。
+> 以下 Actions 运行编号属于迁移前的两仓库布局（当时仓库为 `gaokun3/buildbot`），保留作为历史记录；当前检出与 CI 入口见 [迁移记录](migration.md)。
 
-Iris/GSI 候选 `3a9f5e6c` 已通过完整内核与 DEB/RPM 打包，见 [Actions 35495246617](https://github.com/gaokun3/buildbot/actions/runs/35495246617)，触摸修复后的 `4a73e255` 也已通过 [完整内核与 DEB/RPM 构建](https://github.com/gaokun3/buildbot/actions/runs/35495880873)。
+上一版 `716c798` 已通过完整内核编译及 DEB/RPM 打包（Actions run `35481647905`）；该结果验证双仓库构建流程，不能替代新 Iris 候选验证。
+
+Iris/GSI 候选 `3a9f5e6c` 已通过完整内核与 DEB/RPM 打包（Actions run `35495246617`），触摸修复后的 `4a73e255` 也已通过完整内核与 DEB/RPM 构建（Actions run `35495880873`）。
 
 Iris/GSI 候选已通过 defconfig、Gaokun3 DTB、Iris 全目录对象及 `qcom-iris.o` 链接、SPI GENI 对象交叉编译。反编译 DTB 已确认 Iris compatible、Huawei firmware-name 和启用状态。设备探测、硬件解码或编码尚未实测。
 
@@ -62,12 +68,12 @@ Iris/GSI 候选已通过 defconfig、Gaokun3 DTB、Iris 全目录对象及 `qcom
 
 ## 发行版策略
 
-共享 defconfig 同时编入 SELinux 和 AppArmor，但 `CONFIG_LSM` 默认只有 AppArmor。新建 Fedora/Ubuntu 镜像在内核命令行中显式使用 `lsm=` 选择对应策略。Fedora 显式安装 targeted policy 和 policycoreutils，并在镜像组装末尾用 setfiles 为新建文件打标签；该步骤已通过完整 Fedora 镜像 CI，启动后的策略加载仍需实机确认。已有系统升级沿用用户的命令行，不能据此认为旧镜像已修复；实机验收应检查 `/sys/kernel/security/lsm`，Fedora 还需确认策略加载与文件标签。
+共享 defconfig 同时编入 SELinux 和 AppArmor，但 `CONFIG_LSM` 默认只有 AppArmor。**注意：当前镜像脚本并不在内核命令行中写入 `lsm=`**，因此 SELinux 策略不会在启动时被自动选中；`/proc/cmdline` 中不会出现 `lsm=`。Fedora 显式安装 targeted policy 和 policycoreutils，并在镜像组装末尾用 setfiles 为新建文件打标签；该步骤已通过完整 Fedora 镜像 CI，启动后的策略加载仍需实机确认，且不能以「已加载 SELinux 策略」作为已验证结论。已有系统升级沿用用户的命令行，不能据此认为旧镜像已修复；实机验收应检查 `/sys/kernel/security/lsm`，Fedora 还需确认策略加载与文件标签。
 
 ## EC 探测错误返回
 
-新增 `1ab894b42dea`：获取 enable GPIO 返回错误时立即返回 `dev_err_probe()`，避免吞掉 `-EPROBE_DEFER` 后继续注册设备。此问题来自导入的 EC enable pin 补丁。实际 probe 前段的主机故障注入已确认原版吞掉 `-EPROBE_DEFER` / `-EIO`，修复后正确返回；可选 GPIO 不存在时仍继续。EC 对象 `W=1` 构建和 checkpatch 均无警告，新 SHA 已通过 [完整内核与 DEB/RPM CI](https://github.com/gaokun3/buildbot/actions/runs/35512150744)。
+新增 `1ab894b42dea`：获取 enable GPIO 返回错误时立即返回 `dev_err_probe()`，避免吞掉 `-EPROBE_DEFER` 后继续注册设备。此问题来自导入的 EC enable pin 补丁。实际 probe 前段的主机故障注入已确认原版吞掉 `-EPROBE_DEFER` / `-EIO`，修复后正确返回；可选 GPIO 不存在时仍继续。EC 对象 `W=1` 构建和 checkpatch 均无警告，新 SHA 已通过完整内核与 DEB/RPM CI（Actions run `35512150744`）。
 
-Fedora 镜像流程先使用已通过打包的 `4a73e255` 做集成验证（[Actions 35511937857](https://github.com/gaokun3/buildbot/actions/runs/35511937857)）；这次镜像尚不包含上述 EC 修复。
+Fedora 镜像流程先使用已通过打包的 `4a73e255` 做集成验证（Actions run `35511937857`）；这次镜像尚不包含上述 EC 修复。
 
-最终 `1ab894b42` 已通过 [Fedora 44 镜像构建](https://github.com/gaokun3/buildbot/actions/runs/35512617654)，包含上述 EC 修复，产物保存在 Actions artifacts 中。软件构建验证完成，实机测试仍按 [验收清单](hardware-checklist.md) 进行。
+最终 `1ab894b42` 已通过 Fedora 44 镜像构建（Actions run `35512617654`），包含上述 EC 修复，产物保存在 Actions artifacts 中。软件构建验证完成，实机测试仍按 [验收清单](hardware-checklist.md) 进行。

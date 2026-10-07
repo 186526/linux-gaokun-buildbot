@@ -2,7 +2,7 @@
 
 CI 只证明编译、打包和镜像组装。每次升级先保留已知可用的启动项，按下表记录实际结果；未测试的项目写“未测”，不要由构建成功推断硬件可用。
 
-记录：设备/面板型号、发行版、内核 SHA、buildbot SHA、测试日期。两项 SHA 从此次 Actions 输入和 package-manifest.json 取得。
+记录：设备/面板型号、发行版、内核 SHA、buildbot SHA、测试日期。内核 SHA 取自 `build.env` 的 `KERNEL_COMMIT`（并与 `package-manifest.json` 对照），buildbot SHA 取自此次 Actions 输入。
 
 ## 启动后收集
 
@@ -17,7 +17,7 @@ sudo journalctl -b -k > kernel-boot.log
 v4l2-ctl --list-devices
 ```
 
-Fedora 应使用 `fedora` token、加载 SELinux 策略；Ubuntu 应使用 `ubuntu` token 和 AppArmor。现有安装升级会沿用原有命令行，不能仅因新包安装成功就认为策略已经切换。
+Fedora 应使用 `fedora` token，Ubuntu 应使用 `ubuntu` token（Debian 用 machine-id）。注意：镜像脚本不写 `lsm=`，而 `CONFIG_LSM` 默认列表只含 AppArmor，因此不能假定 Fedora 已加载 SELinux 策略；应以 `/sys/kernel/security/lsm` 的实际输出判定。现有安装升级会沿用原有命令行，不能仅因新包安装成功就认为策略已经切换。
 
 | 项目 | 操作与判定 | 结果 |
 | --- | --- | --- |

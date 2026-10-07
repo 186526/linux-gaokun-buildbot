@@ -10,7 +10,7 @@ English | [中文](matebook_ego_build_guide_fedora44_zh.md)
 > **Recommended Host**: Fedora or other RPM/DNF-based distributions  
 > **Repository Assumption**: This document assumes your current repository is at `~/gaokun/linux-gaokun-buildbot`
 
-**For WSL2, it's recommended to switch to a kernel with more complete filesystem support such as `vfat`, `btrfs`, for example: <https://github.com/Nevuly/WSL2-Linux-Kernel-Rolling/releases>**
+**For WSL2, it's recommended to switch to a kernel with more complete filesystem support such as `vfat`, `ext4`, for example: <https://github.com/Nevuly/WSL2-Linux-Kernel-Rolling/releases>**
 
 ---
 
@@ -44,13 +44,15 @@ Prepare source and working directory:
 mkdir -p ~/gaokun/matebook-build-fedora
 
 cd ~/gaokun
-# Get specified version of Linux mainline source
-if [ ! -d "mainline-linux" ]; then
-    git clone --depth 1 --branch v7.2-rc2 \
-        https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git \
-        mainline-linux
+# Get the pinned downstream kernel at the commit recorded in build.env
+if [ ! -d "gaokun3-linux" ]; then
+    git clone https://github.com/gaokun3/linux.git gaokun3-linux
+    git -C gaokun3-linux fetch --depth=1 origin 73033564068250603f5b2150c408554faaf22d66
+    git -C gaokun3-linux checkout --detach FETCH_HEAD
 fi
 ```
+
+> Correction: the kernel input is pinned by `build.env` to `gaokun3/linux` at `73033564068250603f5b2150c408554faaf22d66`, not to the `torvalds/linux` `v7.2-rc2` tag. For a reproducible build use `./build.sh kernel|debs|rpms` instead.
 
 Set environment variables:
 
@@ -283,43 +285,30 @@ truncate -s 12G $IMAGE_FILE
 parted -s $IMAGE_FILE mklabel gpt
 parted -s $IMAGE_FILE mkpart EFI fat32 1MiB 1025MiB
 parted -s $IMAGE_FILE set 1 esp on
-parted -s $IMAGE_FILE mkpart rootfs btrfs 1025MiB 100%
+parted -s $IMAGE_FILE mkpart rootfs ext4 1025MiB 100%
 
 LOOP=$(sudo losetup --show -fP $IMAGE_FILE)
 sudo mkfs.vfat -F32 -n EFI ${LOOP}p1
-sudo mkfs.btrfs -f -L rootfs ${LOOP}p2
+sudo mkfs.ext4 -L rootfs ${LOOP}p2
 
 EFI_UUID=$(sudo blkid -s UUID -o value ${LOOP}p1)
 ROOT_UUID=$(sudo blkid -s UUID -o value ${LOOP}p2)
 ```
 
-### 2. Create Btrfs Subvolumes and Sync RootFS
+### 2. Format the RootFS and Sync the Root Filesystem
+
+> Correction: the Fedora image now uses a single ext4 root partition; `/home` and `/var` are ordinary directories inside it, and no Btrfs subvolumes are created.
 
 ```bash
 sudo mkdir -p /mnt/ego-fedora
-
-# Create common Fedora subvolume layout: @ for root partition, @home for home directory, @var for /var
 sudo mount ${LOOP}p2 /mnt/ego-fedora
-sudo btrfs subvolume create /mnt/ego-fedora/@
-sudo btrfs subvolume create /mnt/ego-fedora/@home
-sudo btrfs subvolume create /mnt/ego-fedora/@var
-sudo umount /mnt/ego-fedora
-
-# Mount subvolumes and prepare EFI partition
-sudo mount -o subvol=@ ${LOOP}p2 /mnt/ego-fedora
-sudo mkdir -p /mnt/ego-fedora/home
-sudo mount -o subvol=@home ${LOOP}p2 /mnt/ego-fedora/home
-sudo mkdir -p /mnt/ego-fedora/var
-sudo mount -o subvol=@var ${LOOP}p2 /mnt/ego-fedora/var
 sudo mkdir -p /mnt/ego-fedora/boot/efi
 sudo mount ${LOOP}p1 /mnt/ego-fedora/boot/efi
 
-sudo rsync -aHAX --info=progress2 --exclude='/proc/*' --exclude='/sys/*' --exclude='/dev/*' --exclude='/run/*' $ROOTFS_DIR/ /mnt/ego-fedora/
+sudo rsync -aHAX --numeric-ids --info=progress2 --exclude='/proc/*' --exclude='/sys/*' --exclude='/dev/*' --exclude='/run/*' $ROOTFS_DIR/ /mnt/ego-fedora/
 
 sudo tee /mnt/ego-fedora/etc/fstab > /dev/null <<EOF
-UUID=${ROOT_UUID}  /         btrfs  subvol=@,compress=zstd:1,ssd,noatime  0  0
-UUID=${ROOT_UUID}  /home     btrfs  subvol=@home,compress=zstd:1,ssd,noatime  0  0
-UUID=${ROOT_UUID}  /var      btrfs  subvol=@var,compress=zstd:1,ssd,noatime  0  0
+UUID=${ROOT_UUID}  /         ext4   errors=remount-ro,noatime  0  1
 UUID=${EFI_UUID}   /boot/efi vfat   defaults,nofail,x-systemd.device-timeout=10s  0  2
 EOF
 ```
@@ -387,7 +376,7 @@ MACHINE_ID=$(cat /etc/machine-id)
 
 bootctl --no-variables --esp-path=/boot/efi install
 
-kernel-install --make-entry-directory=yes --entry-token=machine-id add \
+kernel-install --make-entry-directory=yes --entry-token=os-id add \
     $KREL /boot/vmlinuz-$KREL
 
 if [ -n "$KREL_EL2" ]; then
@@ -405,7 +394,7 @@ EOF
 qcom/sc8280xp-huawei-gaokun3-el2.dtb
 EOF
     KERNEL_INSTALL_CONF_ROOT=$EL2_CONF_ROOT \
-        kernel-install --make-entry-directory=yes --entry-token=machine-id add \
+        kernel-install --make-entry-directory=yes --entry-token=os-id add \
         $KREL_EL2 /boot/vmlinuz-$KREL_EL2
     rm -rf $EL2_CONF_ROOT
 
@@ -421,7 +410,7 @@ EOF
 fi
 
 cat > /boot/efi/loader/loader.conf <<EOF
-default ${MACHINE_ID}-${KREL}.conf
+default fedora-${KREL}.conf
 timeout 5
 console-mode keep
 editor no
@@ -433,7 +422,7 @@ exit
 Notes:
 
 - Instead of manually maintaining `loader/entries/*.conf` and `gaokun3/fedora/...` directories, we let `kernel-install` generate the standard BLS Type #1 layout.
-- Default uses `--entry-token=machine-id`, so entry names become `/boot/efi/loader/entries/<machine-id>-<kernel-release>.conf`.
+- The image script uses `--entry-token=os-id`, so entry names become `/boot/efi/loader/entries/fedora-<kernel-release>.conf` and `/etc/kernel/entry-token` is written as `fedora`.
 - Fedora 44's `90-loaderentry.install` looks for device tree from `/usr/lib/modules/<kernel-release>/dtb/`, so DTB must be placed in this standard path.
 - Fedora's default `51-dracut-rescue.install` generates an additional `0-rescue` boot entry, but this rescue entry doesn't include `devicetree` by default and is unusable on gaokun3, so it's explicitly disabled here.
 
