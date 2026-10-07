@@ -94,7 +94,25 @@ jobs:
       - name: Load reviewed build inputs
         run: |
           set -euo pipefail
+          # The requested dispatch label is authoritative for artifact naming.
+          # build.env pins the source inputs, but its KERNEL_TAG is only the
+          # local-build default (gaokun3); sourcing it here must not clobber the
+          # tag the caller asked for. The image workflows locate the package
+          # release by that tag (gaokun3-debs-<tag>-<base>-<profile>-<ts>) and
+          # reject a manifest whose kernel_tag differs, so the requested label
+          # has to survive.
+          requested_kernel_tag="${KERNEL_TAG:-}"
           . ./build.env
+          if [[ -n "$requested_kernel_tag" ]]; then
+            KERNEL_TAG="$requested_kernel_tag"
+          fi
+          # XanMod source is always cloned at KERNEL_XANMOD_TAG, so the naming
+          # label must equal it; otherwise the manifest would misdescribe the
+          # cloned tree and the image workflows could not match the release.
+          if [[ "${KERNEL_BASE:-mainline}" == "xanmod" && "$KERNEL_TAG" != "$KERNEL_XANMOD_TAG" ]]; then
+            echo "kernel_tag ${KERNEL_TAG} must equal KERNEL_XANMOD_TAG ${KERNEL_XANMOD_TAG} when kernel_base=xanmod" >&2
+            exit 1
+          fi
           echo "BUILDBOT_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           for name in KERNEL_REPOSITORY KERNEL_TAG KERNEL_COMMIT KERNEL_EL2_COMMIT FEDORA_RELEASE UBUNTU_RELEASE; do
             printf '%s=%s\n' "$name" "${!name}" >> "$GITHUB_ENV"
@@ -106,7 +124,8 @@ jobs:
           # mainline uses the reviewed KERNEL_COMMIT pinned in build.env. XanMod
           # is a gitlab.com tree that the github-only helper cannot fetch, so it
           # is cloned by its real tag (KERNEL_XANMOD_TAG) and the resolved commit
-          # is recorded for the manifest. KERNEL_TAG stays the naming label.
+          # is recorded for the manifest. KERNEL_TAG is the requested naming
+          # label, validated against KERNEL_XANMOD_TAG in the previous step.
           # The xanmod tree is intentionally not checked for gaokun3_defconfig:
           # that file is created by patches/0099, which 20_build_kernel_variants.sh
           # applies later, so it is absent from the freshly cloned tag.
