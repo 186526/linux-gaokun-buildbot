@@ -11,8 +11,11 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir -p /etc/kernel
-# Read by the systemd-boot hook invoked through update-initramfs.
-printf 'ubuntu\n' > /etc/kernel/entry-token
+# Read by the systemd-boot hook invoked through update-initramfs. Derive the
+# distribution token the way the RPM does, so a package upgrade writes entries
+# under the same name the image and loader.conf use, and Debian gets "debian"
+# rather than the Ubuntu name this file used to hardcode.
+printf '%s\n' "$(. /etc/os-release; echo "$ID")" > /etc/kernel/entry-token
 for name in install.conf cmdline devicetree; do
   if [ -f "/etc/kernel/$name" ]; then
     cp "/etc/kernel/$name" "$temp_kernel_dir/$name.orig"
