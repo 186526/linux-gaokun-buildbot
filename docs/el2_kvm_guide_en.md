@@ -1,4 +1,4 @@
-> Historical guide: patch paths and kernel build steps below describe the pre-migration tree. See the [migration record](migration.md) for current entry points and blockers. EL2 builds are paused.
+> Historical guide: patch paths and kernel build steps below describe the pre-migration tree. See the [migration record](migration.md) for current entry points and blockers. EL2 is patch-based: the build applies `patches/el2` and no longer requires `KERNEL_EL2_COMMIT`.
 
 English | [中文](el2_kvm_guide_zh.md)
 
@@ -6,7 +6,7 @@ English | [中文](el2_kvm_guide_zh.md)
 
 ## 1. Positioning
 
-- The build flow supports an optional `-gaokun3-el2` kernel variant and the required EFI payloads, but EL2 is currently paused: `build.env` leaves `KERNEL_EL2_COMMIT` empty and `build.sh` refuses a requested `BUILD_EL2=true` build until a reviewed EL2 commit is pinned.
+- The build flow supports an optional `-gaokun3-el2` kernel variant and the required EFI payloads. EL2 is patch-based: `scripts/ci/20_build_kernel_variants.sh` applies `patches/el2` (plus any `patches/xanmod/el2` overrides) on top of the prepared source tree, so `BUILD_EL2=true` no longer requires `KERNEL_EL2_COMMIT`, which `build.env` leaves empty.
 - This document focuses on implementation details, boot-chain structure, and kernel/firmware expectations behind that EL2-capable build output.
 - Use it when you want to understand, debug, or customize the EL2 path rather than as a mandatory post-build checklist.
 
@@ -140,7 +140,7 @@ Currently, you can directly use the patch set in `patches/el2` in the repository
 2. **qcom PAS / SCM / SHM bridge support under EL2**
    Enable SCM and SHM bridge to use the correct owner/VMID under EL2. `0011` adds the `qcom,shm-bridge-vm` binding.
 
-The additional SMP2P / rpmsg / QRTR / pmic_glink stability patches previously listed here are not part of the current `patches/el2` set. They remain in the XanMod-only overrides under `patches/xanmod/el2/` (`0009`, `0010`, `0016`) and are applied only when `KERNEL_BASE=xanmod`. EL2 as a whole is paused until a reviewed `KERNEL_EL2_COMMIT` is pinned.
+The additional SMP2P / rpmsg / QRTR / pmic_glink stability patches previously listed here are not part of the current `patches/el2` set. They remain in the XanMod-only overrides under `patches/xanmod/el2/` (`0009`, `0010`, `0016`) and are applied only when `KERNEL_BASE=xanmod`. EL2 is patch-based, so a XanMod EL2 build applies `0006` and `0011` from `patches/el2` plus `0009`, `0010`, and `0016` from `patches/xanmod/el2`.
 
 ## 5. Firmware Preparation
 

@@ -1,4 +1,4 @@
-> 历史指南：以下补丁目录和内核构建步骤适用于迁移前版本。当前入口及未完成项见 [迁移记录](migration.md)。EL2 暂不可构建。
+> 历史指南：以下补丁目录和内核构建步骤适用于迁移前版本。当前入口及未完成项见 [迁移记录](migration.md)。EL2 为补丁式：构建时叠加 `patches/el2`，不再依赖 `KERNEL_EL2_COMMIT`。
 
 [English](el2_kvm_guide_en.md) | 中文
 
@@ -6,7 +6,7 @@
 
 ## 1. 文档定位
 
-- 构建流程可以可选产出 `-gaokun3-el2` 内核变体以及所需 EFI 载荷，但 EL2 目前暂停：`build.env` 的 `KERNEL_EL2_COMMIT` 为空，`build.sh` 在已审阅的 EL2 提交固定前会拒绝 `BUILD_EL2=true` 构建。
+- 构建流程可以可选产出 `-gaokun3-el2` 内核变体以及所需 EFI 载荷。EL2 为补丁式：`scripts/ci/20_build_kernel_variants.sh` 在准备好的源码树上叠加 `patches/el2`（以及 `patches/xanmod/el2` 覆盖），因此 `BUILD_EL2=true` 不再需要 `KERNEL_EL2_COMMIT`；`build.env` 中该值保持为空。
 - 本文更侧重说明这些 EL2 构建产物背后的实现细节、启动链结构，以及内核与固件要求。
 - 因此它更适合作为理解、调试和定制 EL2 路径的参考，而不是构建完成后必须逐项执行的清单。
 
@@ -140,7 +140,7 @@ CONFIG_QCOM_PIL_INFO=y
 2. **qcom PAS / SCM / SHM bridge 在 EL2 下的支持**
    使 SCM 与 SHM bridge 在 EL2 下使用正确的 owner/VMID。`0011` 新增 `qcom,shm-bridge-vm` 绑定。
 
-此处原先列出的 SMP2P / rpmsg / QRTR / pmic_glink 稳定性补丁并不在当前 `patches/el2` 中，而是保留在 XanMod 专用覆盖 `patches/xanmod/el2/`（`0009`、`0010`、`0016`），仅在 `KERNEL_BASE=xanmod` 时应用。EL2 整体暂停，直到固定的 `KERNEL_EL2_COMMIT` 通过审阅。
+此处原先列出的 SMP2P / rpmsg / QRTR / pmic_glink 稳定性补丁并不在当前 `patches/el2` 中，而是保留在 XanMod 专用覆盖 `patches/xanmod/el2/`（`0009`、`0010`、`0016`），仅在 `KERNEL_BASE=xanmod` 时应用。EL2 为补丁式，XanMod EL2 构建会应用 `patches/el2` 的 `0006` 与 `0011`，并叠加 `patches/xanmod/el2` 的 `0009`、`0010`、`0016`。
 
 ## 5. 固件准备
 

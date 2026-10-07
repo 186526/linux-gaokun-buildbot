@@ -1,5 +1,14 @@
 name: Build Image - Debian Gaokun3
 
+# The dispatch defaults mirror the XanMod source the package workflow clones.
+# With kernel_base=xanmod, gaokun3-package-debs.yml fetches the real XanMod tag
+# (KERNEL_XANMOD_TAG=7.2.9-xanmod1) and labels the package release with
+# kernel_tag, so the default here must equal that tag for the "Resolve package
+# release tag" step to find
+# gaokun3-debs-7.2.9-xanmod1-xanmod-<profile>-<timestamp>. With
+# kernel_base=mainline the source is the commit pinned in build.env and
+# kernel_tag is only a naming label.
+
 on:
   workflow_dispatch:
     inputs:
@@ -8,13 +17,13 @@ on:
         required: true
         default: "trixie"
       kernel_tag:
-        description: Linux kernel tag
+        description: Kernel tag / release label (XanMod uses the real tag, e.g. 7.2.9-xanmod1)
         required: true
-        default: "v7.2-rc2"
+        default: "7.2.9-xanmod1"
       kernel_base:
-        description: Kernel base (mainline or xanmod)
+        description: Kernel base (mainline = pinned build.env commit; xanmod = gitlab.com/xanmod/linux at the real tag)
         required: true
-        default: "mainline"
+        default: "xanmod"
         type: choice
         options:
           - mainline
