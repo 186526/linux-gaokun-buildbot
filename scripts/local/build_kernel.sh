@@ -619,7 +619,6 @@ build_kernel() {
         make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" gaokun3_defconfig
         "$KERN_SRC"/scripts/config --file "$out_dir/.config" --set-str LOCALVERSION "-gaokun3-el2"
     else
-        KERN_SRC="$KERN_SRC_STANDARD"
         out_dir="$KERN_OUT"
         dtb_name="sc8280xp-huawei-gaokun3.dtb"
 

@@ -8,7 +8,12 @@ on:
         required: false
         type: string
       publish_release:
-        description: Publish packages and image as GitHub releases
+        description: Publish the image as a GitHub release
+        required: false
+        default: false
+        type: boolean
+      fedora_release:
+        description: Fedora release version (e.g. 44)
         required: true
         default: "44"
       kernel_tag:

@@ -34,6 +34,21 @@ export CCACHE_NOHASHDIR="${CCACHE_NOHASHDIR:-true}"
 export CCACHE_COMPILERCHECK="${CCACHE_COMPILERCHECK:-content}"
 export PATH="/usr/lib/ccache:$PATH"
 
+# The kernel checkout is not the buildbot repository, so it carries no
+# committer identity of its own. CI runners and fresh containers have none
+# configured, yet `git am` (apply_series) and the EL2 commit below both need
+# one, so set a local identity in the target repo when it is missing. This
+# replaces the helper that used to live only in scripts/local/build_kernel.sh.
+configure_git_identity() {
+  local repo_dir="$1"
+  if [[ -z "$(git -C "$repo_dir" config user.name || true)" ]]; then
+    git -C "$repo_dir" config user.name "gaokun3 buildbot"
+  fi
+  if [[ -z "$(git -C "$repo_dir" config user.email || true)" ]]; then
+    git -C "$repo_dir" config user.email "buildbot@gaokun3.invalid"
+  fi
+}
+
 build_variant() {
   local src_dir="$1"
   local out_dir="$2"
@@ -68,6 +83,21 @@ build_variant() {
 snapshot_tree() {
   local src_dir="$1"
   local dst_dir="$2"
+
+  # Callers may legitimately point KERN_SRC_BASE at KERN_SRC itself (build.sh
+  # does). Nothing has to be copied in that case, and recursing would have
+  # deleted the live source tree, so treat src == dst as a no-op.
+  if [[ "$(realpath -m "$src_dir")" == "$(realpath -m "$dst_dir")" ]]; then
+    echo "snapshot_tree: source and destination are the same ($src_dir); skipping"
+    return 0
+  fi
+
+  # Refuse to destroy a mismatched source: a snapshot must be taken from an
+  # existing directory, so a typo or an unset KERN_SRC never wipes a checkout.
+  if [[ ! -d "$src_dir" ]]; then
+    echo "snapshot_tree: source $src_dir is not a directory" >&2
+    return 1
+  fi
 
   rm -rf "$dst_dir"
   mkdir -p "$dst_dir"
@@ -142,8 +172,9 @@ if [[ "$BUILD_EL2" != "true" ]]; then
   exit 0
 fi
 
-build_variant "$KERN_SRC" "$KERN_OUT"
-cat "$KERN_OUT/include/config/kernel.release" > "$WORKDIR/kernel-release.txt"
+# No standard rebuild here: the standard variant was already built above and
+# its release recorded in kernel-release.txt. Re-running build_variant would
+# rebuild the same tree/output and overwrite that file.
 rm -f "$WORKDIR/kernel-release-el2.txt"
 
 configure_git_identity "$KERN_SRC_EL2"
