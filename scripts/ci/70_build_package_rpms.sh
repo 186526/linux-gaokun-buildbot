@@ -103,7 +103,7 @@ build_variant_rpms() {
 hostonly="no"
 # Keep btrfs available for existing installations; new images use ext4.
 add_drivers+=" ext4 btrfs nvme phy-qcom-qmp-pcie phy-qcom-qmp-combo phy-qcom-qmp-usb phy-qcom-snps-femto-v2 usb-storage uas typec pci-pwrctrl-pwrseq ath11k ath11k_pci i2c-hid-of lpasscc_sc8280xp snd-soc-sc8280xp pinctrl_sc8280xp_lpass_lpi "
-install_items+=" /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcslpi8280.mbn /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcadsp8280.mbn /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qccdsp8280.mbn /lib/firmware/qcom/sc8280xp/SC8280XP-HUAWEI-GAOKUN3-tplg.bin /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/audioreach-tplg.bin "
+install_items+=" /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcslpi8280.mbn /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcadsp8280.mbn /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qccdsp8280.mbn /lib/firmware/qcom/sc8280xp/SC8280XP-HUAWEI-GAOKUN3-tplg.bin /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/audioreach-tplg.bin /lib/firmware/updates/qcom/a660_gmu.bin /lib/firmware/updates/qcom/a660_sqe.fw "
 EOF
 
   make -C "$src_dir" O="$out_dir" ARCH=arm64 INSTALL_MOD_PATH="$modules_raw_stage" modules_install
@@ -196,6 +196,14 @@ build_firmware_rpm() {
     "$firmware_stage/usr/lib/firmware/qcom/sc8280xp/"
   ln -s HUAWEI/gaokun3/audioreach-tplg.bin \
     "$firmware_stage/usr/lib/firmware/qcom/sc8280xp/SC8280XP-HUAWEI-GAOKUN3-tplg.bin"
+  # msm (DRM) loads the Adreno a660 SQE/GPU manager firmware before the panel
+  # comes up. Fedora's qcom-firmware owns qcom/a660_*.xz, so ship the repository
+  # copies under updates/, which the kernel firmware loader searches before
+  # /usr/lib/firmware; this overrides Fedora's copy without a path conflict.
+  install -Dm644 "$GAOKUN_DIR/firmware/qcom/a660_gmu.bin" \
+    "$firmware_stage/usr/lib/firmware/updates/qcom/a660_gmu.bin"
+  install -Dm644 "$GAOKUN_DIR/firmware/qcom/a660_sqe.fw" \
+    "$firmware_stage/usr/lib/firmware/updates/qcom/a660_sqe.fw"
 
   prepare_tarball "$firmware_tar" "$firmware_stage"
 
