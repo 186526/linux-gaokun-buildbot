@@ -161,13 +161,14 @@ configure_kernel_su() {
   "$src_dir"/scripts/config --file "$out_dir/.config" --enable KPROBES
   "$src_dir"/scripts/config --file "$out_dir/.config" --enable FTRACE
   "$src_dir"/scripts/config --file "$out_dir/.config" --enable KSU
+  "$src_dir"/scripts/config --file "$out_dir/.config" --enable KSU_DEBUG
 }
 
 assert_kernelsu_enabled() {
   local out_dir="$1"
   local symbol
 
-  for symbol in CONFIG_KSU CONFIG_KPROBES CONFIG_TRACEPOINTS; do
+  for symbol in CONFIG_KSU CONFIG_KSU_DEBUG CONFIG_KPROBES CONFIG_TRACEPOINTS; do
     if ! grep -qx "${symbol}=y" "$out_dir/.config"; then
       echo "KernelSU integration did not enable ${symbol}=y in $out_dir/.config" >&2
       return 1

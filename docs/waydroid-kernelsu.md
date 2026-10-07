@@ -149,6 +149,57 @@ syscall=142
 
 KernelSU Manager v3.3.0 发布早于 KernelSU 官方 SIGSYS 降级修复。更换包含该修复的 Manager 只能避免 `libksud.so` 因 SIGSYS 直接终止，不能替代放行 LXC `reboot` 规则，也不能单独恢复 root。
 
+## Waydroid Manager 未识别的限制
+
+本次目标机还确认了第二个独立问题。当前运行内核的配置为：
+
+```text
+CONFIG_KSU=y
+# CONFIG_KSU_DEBUG is not set
+```
+
+Manager 启动后能够加载 `libksud.so`，但内核日志仍出现：
+
+```text
+KernelSU: ksu ioctl: permission denied for cmd=0x4b01 uid=10147
+```
+
+`0x4b01` 是 `GRANT_ROOT`。这表示 `me.weishu.kernelsu` 的 appid `10147` 尚未成为 KernelSU manager，不能执行 root 操作。目标机的 `/data/adb` 为空，且没有 `ksu_debug_manager_appid` 参数，因此不能通过运行时文件权限或重装 APK 修复这个状态。
+
+上游 KernelSU 的 manager 识别会扫描 Android 包列表和 APK。当前内核缺少调试接口，无法在启动后直接设置 appid。本仓库的 `scripts/ci/lib/kernelsu.sh` 和 `scripts/local/build_kernel.sh` 已经同时启用并检查：
+
+```text
+CONFIG_KSU_DEBUG=y
+```
+
+本次已经完成标准 Gaokun3 内核的本地编译，产物为 `7.2.9-gaokun3-ksu-xanmod1`，并确认 `.config` 包含 `CONFIG_KSU_DEBUG=y`。由于目标机 SSH 账户当前指向不存在的 `/usr/bin/zsh`，该内核尚未安装、尚未启动，Manager 识别和 root 结果仍待目标机恢复 SSH 后验证。
+
+目标机恢复后，使用容器命令读取 Manager UID。目标机的 Waydroid Python CLI 会把部分 Android 短参数错误解析为自身参数，因此使用 `lxc-attach`：
+
+```bash
+sudo lxc-attach -P /var/lib/waydroid/lxc -n waydroid -- \
+  /system/bin/sh -c 'grep me.weishu.kernelsu /data/system/packages.list'
+sudo cat /sys/module/kernelsu/parameters/ksu_debug_manager_appid
+```
+
+将包列表中的 appid 写入参数并重启 Manager：
+
+```bash
+sudo sh -c 'printf 10147 > /sys/module/kernelsu/parameters/ksu_debug_manager_appid'
+sudo lxc-attach -P /var/lib/waydroid/lxc -n waydroid -- \
+  /system/bin/am force-stop me.weishu.kernelsu
+waydroid app launch me.weishu.kernelsu
+```
+
+最后必须验证实际 root 请求：
+
+```bash
+sudo lxc-attach -P /var/lib/waydroid/lxc -n waydroid -- \
+  /system/bin/su -c id
+```
+
+上述命令中的 `10147` 只适用于本次目标机当前安装状态；重新安装 Manager 后必须重新读取 appid。Manager 界面识别成功、内核日志不再出现 `GRANT_ROOT` 的 `permission denied`，并且 `su -c id` 返回 `uid=0(root)` 后，才能宣称 Manager 已经可用。
+
 验证内核仍然包含 KernelSU：
 
 ```bash

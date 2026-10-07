@@ -455,8 +455,10 @@ unwire_kernelsu() {
 
 # Enable KernelSU's configuration in one variant's generated .config. KSU
 # depends on KPROBES and its syscall hook needs TRACEPOINTS (selected by
-# FTRACE); the gaokun3 defconfig disables tracing. olddefconfig drops an unmet
-# tristate silently, so the symbols are enabled here and verified afterwards.
+# FTRACE); the gaokun3 defconfig disables tracing. KSU_DEBUG is needed to
+# inspect or set the manager appid in container-based Android environments.
+# olddefconfig drops an unmet tristate silently, so the symbols are enabled here
+# and verified afterwards.
 configure_kernelsu_config() {
     local out_dir="$1"
 
@@ -467,6 +469,7 @@ configure_kernelsu_config() {
     "$KERN_SRC"/scripts/config --file "$out_dir/.config" --enable KPROBES
     "$KERN_SRC"/scripts/config --file "$out_dir/.config" --enable FTRACE
     "$KERN_SRC"/scripts/config --file "$out_dir/.config" --enable KSU
+    "$KERN_SRC"/scripts/config --file "$out_dir/.config" --enable KSU_DEBUG
 }
 
 assert_kernelsu_enabled() {
@@ -477,7 +480,7 @@ assert_kernelsu_enabled() {
         return 0
     fi
 
-    for symbol in CONFIG_KSU CONFIG_KPROBES CONFIG_TRACEPOINTS; do
+    for symbol in CONFIG_KSU CONFIG_KSU_DEBUG CONFIG_KPROBES CONFIG_TRACEPOINTS; do
         if ! grep -qx "${symbol}=y" "$out_dir/.config"; then
             echo "ERROR: KernelSU integration did not enable ${symbol}=y in $out_dir/.config" >&2
             exit 1
