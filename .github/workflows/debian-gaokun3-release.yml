@@ -4,10 +4,14 @@ name: Build Image - Debian Gaokun3
 # With kernel_base=xanmod, gaokun3-package-debs.yml fetches the real XanMod tag
 # (KERNEL_XANMOD_TAG=7.2.9-xanmod1) and labels the package release with
 # kernel_tag, so the default here must equal that tag for the "Resolve package
-# release tag" step to find
+# source" step to find
 # gaokun3-debs-7.2.9-xanmod1-xanmod-<profile>-<timestamp>. With
 # kernel_base=mainline the source is the commit pinned in build.env and
 # kernel_tag is only a naming label.
+#
+# With rebuild_package_debs=true the DEBs arrive as the package workflow's
+# gaokun3-package-debs artifact, because the reusable workflow is called without
+# publish_release and therefore creates no GitHub release to resolve.
 
 on:
   workflow_dispatch:
@@ -103,17 +107,26 @@ jobs:
       - name: Prepare build workspace
         run: |
           set -euxo pipefail
-          mkdir -p "$WORKDIR" "$ROOTFS_DIR" "$ARTIFACT_DIR"
+          mkdir -p "$WORKDIR" "$ROOTFS_DIR" "$ARTIFACT_DIR" "$PACKAGE_DEBS_DIR"
 
-      - name: Resolve package release tag
+      - name: Resolve package source
+        id: package_source
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
 
+          # The reusable package workflow does not publish a GitHub release
+          # (its "Publish package release" step is skipped unless the caller
+          # asks for one), so a rebuild hands its DEBs to this job through the
+          # workflow's own `gaokun3-package-debs` artifact instead of a release
+          # tag. Only the non-rebuild path resolves an existing package release.
           if [[ "${{ github.event.inputs.rebuild_package_debs }}" == "true" ]]; then
-            package_release_tag="${{ needs.build-package-debs.outputs.package_release_tag }}"
+            echo "package_source=artifact" >> "$GITHUB_OUTPUT"
+            echo "package_release_tag=${{ needs.build-package-debs.outputs.package_release_tag }}" >> "$GITHUB_OUTPUT"
           else
+            echo "package_source=release" >> "$GITHUB_OUTPUT"
+
             safe_kernel_tag="${KERNEL_TAG//\//-}"
             safe_kernel_tag="${safe_kernel_tag//[^A-Za-z0-9._-]/-}"
             base_suffix=""
@@ -141,18 +154,19 @@ jobs:
               echo "no package release found for prefix ${prefix}" >&2
               exit 1
             fi
+
+            echo "package_release_tag=$package_release_tag" >> "$GITHUB_OUTPUT"
           fi
 
-          echo "PACKAGE_RELEASE_TAG=$package_release_tag" >> "$GITHUB_ENV"
-
-      - name: Download gaokun package DEBs
+      - name: Download gaokun package DEBs from release
+        if: steps.package_source.outputs.package_source == 'release'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          mkdir -p "$PACKAGE_DEBS_DIR"
+          package_release_tag="${{ steps.package_source.outputs.package_release_tag }}"
 
-          api_url="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${PACKAGE_RELEASE_TAG}"
+          api_url="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${package_release_tag}"
           release_json="$WORKDIR/package-release.json"
 
           curl -fsSL \
@@ -165,7 +179,7 @@ jobs:
           asset_url="$(jq -r --arg name "$asset_name" '.assets[] | select(.name == $name) | .url' "$release_json")"
 
           if [[ -z "$asset_url" || "$asset_url" == "null" ]]; then
-            echo "missing asset ${asset_name} in release ${PACKAGE_RELEASE_TAG}" >&2
+            echo "missing asset ${asset_name} in release ${package_release_tag}" >&2
             exit 1
           fi
 
@@ -186,12 +200,12 @@ jobs:
           fi
 
           if [[ "$BUILD_EL2" == "true" && "$manifest_build_el2" != "true" ]]; then
-            echo "package release ${PACKAGE_RELEASE_TAG} does not contain EL2 packages" >&2
+            echo "package release ${package_release_tag} does not contain EL2 packages" >&2
             exit 1
           fi
 
           if [[ "$BUILD_KERNELSU" == "true" && "$manifest_build_kernelsu" != "true" ]]; then
-            echo "package release ${PACKAGE_RELEASE_TAG} does not contain KernelSU support" >&2
+            echo "package release ${package_release_tag} does not contain KernelSU support" >&2
             exit 1
           fi
 
@@ -216,7 +230,7 @@ jobs:
             asset_url="$(jq -r --arg name "$asset_name" '.assets[] | select(.name == $name) | .url' "$release_json")"
 
             if [[ -z "$asset_url" || "$asset_url" == "null" ]]; then
-              echo "missing asset ${asset_name} in release ${PACKAGE_RELEASE_TAG} (original name: ${raw_name})" >&2
+              echo "missing asset ${asset_name} in release ${package_release_tag} (original name: ${raw_name})" >&2
               exit 1
             fi
 
@@ -225,6 +239,77 @@ jobs:
               -H "Accept: application/octet-stream" \
               "$asset_url" \
               -o "$PACKAGE_DEBS_DIR/$raw_name"
+          done
+
+      - name: Download gaokun package DEBs from package workflow artifact
+        if: steps.package_source.outputs.package_source == 'artifact'
+        uses: actions/download-artifact@v6
+        with:
+          name: gaokun3-package-debs
+          path: ${{ env.PACKAGE_DEBS_DIR }}
+
+      - name: Validate gaokun package DEBs
+        run: |
+          set -euxo pipefail
+          package_release_tag="${{ steps.package_source.outputs.package_release_tag }}"
+
+          # The package workflow uploads a flat set of files, but tolerate the
+          # artifact uploader nesting them one level deep: flatten so the DEBs
+          # sit exactly where the manifest names them.
+          if [[ ! -f "$PACKAGE_DEBS_DIR/package-manifest.json" ]]; then
+            manifest_hit="$(find "$PACKAGE_DEBS_DIR" -mindepth 2 -maxdepth 3 -name package-manifest.json -print -quit)"
+            if [[ -n "$manifest_hit" ]]; then
+              find "$(dirname "$manifest_hit")" -mindepth 1 -maxdepth 1 -exec mv -t "$PACKAGE_DEBS_DIR" -- {} +
+            fi
+          fi
+
+          manifest_path="$PACKAGE_DEBS_DIR/package-manifest.json"
+          if [[ ! -f "$manifest_path" ]]; then
+            echo "missing package manifest at ${manifest_path}" >&2
+            exit 1
+          fi
+
+          manifest_kernel_tag="$(jq -r '.kernel_tag' "$manifest_path")"
+          manifest_build_el2="$(jq -r '.build_el2' "$manifest_path")"
+          manifest_build_kernelsu="$(jq -r '.build_kernelsu' "$manifest_path")"
+
+          if [[ "$manifest_kernel_tag" != "$KERNEL_TAG" ]]; then
+            echo "package kernel tag mismatch: expected ${KERNEL_TAG}, got ${manifest_kernel_tag}" >&2
+            exit 1
+          fi
+
+          if [[ "$BUILD_EL2" == "true" && "$manifest_build_el2" != "true" ]]; then
+            echo "package set ${package_release_tag} does not contain EL2 packages" >&2
+            exit 1
+          fi
+
+          if [[ "$BUILD_KERNELSU" == "true" && "$manifest_build_kernelsu" != "true" ]]; then
+            echo "package set ${package_release_tag} does not contain KernelSU support" >&2
+            exit 1
+          fi
+
+          asset_names=(
+            "$(jq -r '.kernels.standard.packages.image' "$manifest_path")"
+            "$(jq -r '.kernels.standard.packages.modules' "$manifest_path")"
+            "$(jq -r '.packages.firmware' "$manifest_path")"
+          )
+
+          if [[ "$BUILD_EL2" == "true" ]]; then
+            asset_names+=(
+              "$(jq -r '.kernels.el2.packages.image' "$manifest_path")"
+              "$(jq -r '.kernels.el2.packages.modules' "$manifest_path")"
+            )
+          fi
+
+          for raw_name in "${asset_names[@]}"; do
+            if [[ -z "$raw_name" || "$raw_name" == "null" ]]; then
+              echo "package manifest ${manifest_path} does not name every required DEB" >&2
+              exit 1
+            fi
+            if [[ ! -f "$PACKAGE_DEBS_DIR/$raw_name" ]]; then
+              echo "missing DEB ${raw_name} in package set ${package_release_tag}" >&2
+              exit 1
+            fi
           done
 
       - name: Bootstrap Debian rootfs
