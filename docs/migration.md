@@ -17,12 +17,21 @@
 | 内核仓库 | `gaokun3/linux` |
 | 标签 | `gaokun3` |
 | 检出提交 | `73033564068250603f5b2150c408554faaf22d66` |
-| EL2 提交 | 未设置；显式请求会报错 |
+| EL2 提交 | 未设置；EL2 为补丁式，不参与检出 |
 | Fedora / Ubuntu | 44 / 26.04 |
 
 `KERNEL_TAG` 目前只是产物命名标签，并不代表 GitHub 已存在该 tag；真正检出依据为 `KERNEL_COMMIT`，由 `scripts/lib/kernel_source.sh` 以 `git fetch --depth=1` 取对应提交并做分离头检出。已有源码目录必须与 `KERNEL_COMMIT` 完全一致，且不得含本地改动或未跟踪文件，否则脚本报错退出。正式发布前仍需建立不可变 tag。Ubuntu rootfs 下载失败直接停止，不再回退 beta。
 
 软件包清单记录内核 SHA 与 buildbot SHA；镜像组装核对内核 SHA，防止复用不同源码生成的软件包。
+
+## 内核来源选择
+
+`KERNEL_BASE` 决定源码来源，两条路径互不相同：
+
+- `mainline`（默认）：按 `build.env` 固定的 `KERNEL_COMMIT` 检出（`scripts/lib/kernel_source.sh`）。此时 `kernel_tag` 仅是产物命名标签，不用于取源码。
+- `xanmod`：由打包工作流克隆 `https://gitlab.com/xanmod/linux.git` 并检出真实 XanMod tag，tag 由工作流内的 `KERNEL_XANMOD_TAG`（当前 `7.2.9-xanmod1`）给出。`kernel_tag` 必须与该 tag 一致，否则镜像工作流按前缀 `gaokun3-debs-<tag>-xanmod-<profile>-` 查找不到软件包 release。XanMod 树没有 `gaokun3_defconfig`，该文件由 `patches/0099` 生成，因此不对其做预检查。
+
+因此 Debian 镜像工作流的 dispatch 默认即为 `kernel_tag=7.2.9-xanmod1`、`kernel_base=xanmod`；改用 mainline 时需同时改回 `kernel_tag`（例如 `v7.2-rc2`）。
 
 ## 本地构建
 
@@ -45,7 +54,7 @@ KERN_SRC=/absolute/path/to/linux ./build.sh kernel
 - 根据原重启规划纠正视频路线：next 去除旧 Venus 系列，移植上游 Iris DTS 并启用 stable Iris 驱动；解码及编码均未实测。补入 right-0903 force-GSI 实现，已吸收 vahiru 的 SPI 重试和预测位置跳点修复，整体算法替换仍待审查。详见 [内核审计](kernel-audit.md)。
 - `CONFIG_INPUT_UINPUT=m` 已在配置中；PR #2 的用户空间部分未在本轮引入。
 - `9420138` 删除的旧 UCSI、q6apm 改动与新基线冲突，尚待语义审查；不能宣称已上游或功能等价。
-- EL2 仅有部分移植工作：remoteproc 异步 attach 与 q6v5 running 状态变更需要继续审查，不能发布。
+- EL2 仅有部分移植工作：remoteproc 异步 attach 与 q6v5 running 状态变更需要继续审查，不能发布。EL2 以补丁形式叠加（`patches/el2`，XanMod 下另加 `patches/xanmod/el2` 的 `0009`、`0010`、`0016`），不再依赖单独的 EL2 提交；产物是否可用仍需实机验证。
 - systemd-boot 使用 `fedora` / `ubuntu` entry token（Debian 用 machine-id）。旧 machine-id 条目保留作回退；详见 [启动布局](boot-layout.md)。
 
 ## 已验证与发布门槛
@@ -74,6 +83,24 @@ Fedora 测试镜像为 `fedora-44-gaokun3.img.zst`，解压后的 raw 磁盘镜�
 gh workflow run fedora-gaokun3-release.yml --repo 186526/linux-gaokun-buildbot \
   -f package_run_id=PACKAGE_CI_RUN_ID -f publish_release=false
 ```
+
+Fedora 与 Ubuntu 镜像工作流的 `Load reviewed build inputs` 步骤仍在 `KERNEL_EL2_COMMIT` 为空时拒绝 `build_el2=true`；该判定尚未随补丁式 EL2 更新，因此这两个工作流目前不能请求 EL2。Debian 工作流没有该判定。
+
+Debian Trixie 镜像配合 XanMod、EL2 与 KernelSU 时，先发布对应的软件包 release，再构建镜像（镜像按 release 前缀查找软件包）：
+
+```bash
+# 1) 发布 XanMod + EL2 + KernelSU 的 DEB 包
+gh workflow run gaokun3-package-debs.yml --repo 186526/linux-gaokun-buildbot \
+  -f kernel_tag=7.2.9-xanmod1 -f kernel_base=xanmod \
+  -f build_el2=true -f build_kernelsu=true -f publish_release=true
+
+# 2) 用同参数构建 Debian Trixie 镜像（rebuild_package_debs=false 走 release 查找）
+gh workflow run debian-gaokun3-release.yml --repo 186526/linux-gaokun-buildbot \
+  -f debian_release=trixie -f kernel_tag=7.2.9-xanmod1 -f kernel_base=xanmod \
+  -f build_el2=true -f build_kernelsu=true -f rebuild_package_debs=false
+```
+
+`kernel_tag` 必须与软件包 release 中 manifest 的标签一致；镜像任务按 `gaokun3-debs-<kernel_tag>-xanmod-<profile>-<时间戳>`（profile 为 `std`，依次追加 `-el2`、`-ksu`）前缀查找，找不到即报错退出。`build_el2`、`build_kernelsu` 必须与发布时一致，否则 manifest 校验失败。注意 Debian/Ubuntu 镜像工作流的 `rebuild_package_debs=true` 路径会去 release API 下载重建的 DEB，而经 `workflow_call` 调用的打包任务默认不发布（`publish_release` 默认 `false`），因此该路径当前不可用；Fedora 工作流另有 `package_run_id` / download-artifact 步骤，不受此限。
 
 构建成功不代表设备启动和升级测试通过。
 
