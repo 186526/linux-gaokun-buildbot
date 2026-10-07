@@ -106,12 +106,11 @@ jobs:
       - name: Checkout Linux source
         run: |
           set -euxo pipefail
-          case "${KERNEL_BASE:-mainline}" in
-            xanmod) KERNEL_BASE_URL="https://gitlab.com/xanmod/linux.git" ;;
-            *)      KERNEL_BASE_URL="https://github.com/torvalds/linux.git" ;;
-          esac
-          mkdir -p "$(dirname "$KERN_SRC")"
-          git clone --depth 1 --branch "$KERNEL_TAG" "$KERNEL_BASE_URL" "$KERN_SRC"
+          # KERNEL_TAG names the artifacts only; the reviewed KERNEL_COMMIT in
+          # build.env is the commit fetched from KERNEL_REPOSITORY.
+          # shellcheck source=scripts/lib/kernel_source.sh
+          . ./scripts/lib/kernel_source.sh
+          prepare_kernel_source "$KERN_SRC" "$KERNEL_COMMIT"
 
       - name: Checkout EL2 Linux source
         if: env.BUILD_EL2 == 'true'
