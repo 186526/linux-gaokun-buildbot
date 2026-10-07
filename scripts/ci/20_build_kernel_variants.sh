@@ -13,8 +13,8 @@ resolve_kernel_base
 . "$GAOKUN_DIR/scripts/ci/lib/kernelsu.sh"
 
 KERN_OUT="${KERN_OUT:-$WORKDIR/kernel-out}"
-KERN_SRC_BASE="${KERN_SRC_BASE:-$WORKDIR/mainline-linux-base}"
-KERN_SRC_EL2="${KERN_SRC_EL2:-$KERN_SRC}"
+KERN_SRC_BASE="${KERN_SRC_BASE:-$KERN_SRC}"
+KERN_SRC_EL2="${KERN_SRC_EL2:-$WORKDIR/linux-el2}"
 KERN_OUT_EL2="${KERN_OUT_EL2:-}"
 BUILD_EL2="${BUILD_EL2:-false}"
 # Opt-in: when true, every requested variant is built with the pinned KernelSU
@@ -34,19 +34,12 @@ export CCACHE_NOHASHDIR="${CCACHE_NOHASHDIR:-true}"
 export CCACHE_COMPILERCHECK="${CCACHE_COMPILERCHECK:-content}"
 export PATH="/usr/lib/ccache:$PATH"
 
-configure_git_identity() {
-  local repo_dir="$1"
-  git -C "$repo_dir" config user.name "github-actions[bot]"
-  git -C "$repo_dir" config user.email "github-actions[bot]@users.noreply.github.com"
-}
-
 build_variant() {
   local src_dir="$1"
   local out_dir="$2"
   local localversion="${3:-}"
   local kernelsu="${4:-false}"
 
-  rm -rf "$out_dir"
   mkdir -p "$out_dir"
 
   unset KCONFIG_CONFIG
@@ -149,7 +142,9 @@ if [[ "$BUILD_EL2" != "true" ]]; then
   exit 0
 fi
 
-: "${KERN_OUT_EL2:?missing KERN_OUT_EL2}"
+build_variant "$KERN_SRC" "$KERN_OUT"
+cat "$KERN_OUT/include/config/kernel.release" > "$WORKDIR/kernel-release.txt"
+rm -f "$WORKDIR/kernel-release-el2.txt"
 
 configure_git_identity "$KERN_SRC_EL2"
 rm -rf "$KERN_OUT_EL2"

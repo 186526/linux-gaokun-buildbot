@@ -29,7 +29,7 @@ This document uses `systemd-boot` as an example to take over the default boot en
 After completion, the internal drive EFI partition root should typically contain:
 - `EFI`
 - `loader`
-- `<machine-id>` or other `kernel-install` entry-token directory
+- `fedora` or `ubuntu` (`kernel-install` entry token)
 - `firmware` (if image includes EL2)
 - `tcblaunch.exe` (if image includes EL2)
 
@@ -43,8 +43,8 @@ Windows can generally be auto-detected by `systemd-boot`, so no additional modif
 Notes:
 
 - The images now use standard `kernel-install` + BLS layout, no longer using fixed `gaokun3/<distro>/<kernel-release>/...` directories.
-- By default, Gaokun3 images use `--entry-token=machine-id`, so the ESP typically contains `/loader/entries/<machine-id>-<kernel-release>.conf`, and `/<machine-id>/<kernel-release>/linux|initrd|*.dtb` directory structure.
-- If the distribution or user has changed `kernel-install --entry-token`, the top-level directory name may not be `machine-id`, but will still follow the same BLS rules.
+- New images persist `fedora` or `ubuntu` in `/etc/kernel/entry-token`. Entries are `/loader/entries/<distro>-<kernel-release>.conf`, with kernel, initrd and DTB under `/<distro>/<kernel-release>/`.
+- Older machine-id entries may remain for rollback. Keep them until the new entry has booted successfully; see [boot layout](boot-layout.md).
 
 ## 4. Modify EFI Partition Volume Serial Number
 
@@ -56,7 +56,7 @@ Notes:
 
 - After reboot, you should enter the `systemd-boot` boot menu.
 - The menu allows selecting Windows or Linux distribution to boot.
-- After entering the Linux distribution, you can use gnome-disk or other disk tools, or commands like growpart/resize2fs/btrfs to expand the rootfs partition and filesystem to the remaining space.
+- After entering the Linux distribution, you can use gnome-disk or other disk tools, or commands like growpart/resize2fs to expand the rootfs partition and filesystem to the remaining space.
 
 ## Additional Notes (EL2 Optional)
 

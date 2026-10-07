@@ -51,7 +51,10 @@ sudo mount "${LOOP}p2" "$MNT"
 sudo mkdir -p "$MNT/boot/efi"
 sudo mount "${LOOP}p1" "$MNT/boot/efi"
 
-sudo rsync -aHAX --exclude='/proc/*' --exclude='/sys/*' --exclude='/dev/*' --exclude='/run/*' "$ROOTFS_DIR/" "$MNT/"
+sudo rsync -aHAX --numeric-ids --exclude='/proc/*' --exclude='/sys/*' --exclude='/dev/*' --exclude='/run/*' "$ROOTFS_DIR/" "$MNT/"
+# Do not inherit the CI staging directory owner as the root directory owner.
+sudo chown root:root "$MNT"
+sudo chmod 0755 "$MNT"
 install_common_image_assets "$MNT" "$GAOKUN_DIR"
 
 sudo tee "$MNT/etc/fstab" >/dev/null <<EOF
@@ -92,29 +95,11 @@ Language=zh_CN.UTF-8
 SystemAccount=true
 EOF
 
-install -d -m 0755 /home/user/.config
-install -Dm644 /usr/local/share/gaokun/monitors.xml /home/user/.config/monitors.xml
-chown -R user:user /home/user
-
-install -d -m 1777 -o root -g root /tmp/.X11-unix
-
-cat > /etc/systemd/system/gaokun-fix-x11-unix.service <<'EOF'
-[Unit]
-Description=Fix /tmp/.X11-unix ownership for Xwayland
-After=gdm.service
-Wants=gdm.service
-
-[Service]
-Type=oneshot
-ExecStart=/bin/sh -c 'mkdir -p /tmp/.X11-unix && chown root:root /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix'
-
-[Install]
-WantedBy=graphical.target
-EOF
-
-systemctl enable gdm NetworkManager ssh \
-  gaokun-fix-x11-unix.service gdm-monitor-sync.service \
-  patch-nvm-bdaddr.service || true
+command -v nmcli
+command -v nmtui
+systemctl enable gdm3.service NetworkManager.service ssh.service systemd-resolved.service \
+  patch-nvm-bdaddr.service
+systemctl set-default graphical.target
 
 cat >> /etc/initramfs-tools/modules <<'MODEOF'
 # Storage and USB
@@ -160,6 +145,10 @@ cat > /etc/kernel/install.conf <<'EOF'
 layout=bls
 EOF
 
+# Persist the same short token for later package and initramfs hooks.
+printf '%s\n' 'ubuntu' > /etc/kernel/entry-token
+
+# The shared kernel includes both major LSMs; select the distro policy.
 cat > /etc/kernel/cmdline <<EOF
 root=UUID=$ROOT_UUID clk_ignore_unused pd_ignore_unused arm64.nopauth iommu.passthrough=0 iommu.strict=0 pcie_aspm.policy=powersupersave modprobe.blacklist=simpledrm efi=noruntime usbhid.quirks=0x12d1:0x10b8:0x20000000 consoleblank=0 loglevel=4 psi=1
 EOF
@@ -183,7 +172,6 @@ fi
 
 rm -f /etc/machine-id
 systemd-machine-id-setup
-MACHINE_ID="$(cat /etc/machine-id)"
 
 bootctl --no-variables --esp-path=/boot/efi install
 
@@ -202,9 +190,9 @@ EOF
   printf '%s\n' "$cmdline" > "$conf_root/cmdline"
   printf 'qcom/%s\n' "$dtb" > "$conf_root/devicetree"
 
-  kernel-install --entry-token=machine-id remove "$krel" || true
+  kernel-install --entry-token=os-id remove "$krel" || true
   KERNEL_INSTALL_CONF_ROOT="$conf_root" \
-    kernel-install --verbose --make-entry-directory=yes --entry-token=machine-id add \
+    kernel-install --verbose --make-entry-directory=yes --entry-token=os-id add \
     "$krel" "$image" "$initrd"
   rm -rf "$conf_root"
 }
@@ -228,11 +216,16 @@ if [[ "$BUILD_EL2" == "true" && -n "$KREL_EL2" ]]; then
 fi
 
 cat > /boot/efi/loader/loader.conf <<EOF
-default ${MACHINE_ID}-${KREL}.conf
+default ubuntu-${KREL}.conf
 timeout 5
 console-mode keep
-editor no
+editor yes
 EOF
+# Leave identity and entropy generation to each installed device.
+rm -f /boot/efi/loader/random-seed /var/lib/systemd/random-seed /var/lib/systemd/credential.secret
+rm -f /var/lib/dbus/machine-id
+ln -s /etc/machine-id /var/lib/dbus/machine-id
+printf 'uninitialized\n' > /etc/machine-id
 CHROOT_EOF
 
 if [[ "$BUILD_EL2" == "true" && -n "$KREL_EL2" ]]; then

@@ -1,0 +1,31 @@
+name: Validate kernel packages
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [next]
+    paths:
+      - build.env
+      - build.sh
+      - scripts/**
+      - packaging/**
+      - firmware/**
+      - .github/workflows/gaokun3-package-*.yml
+      - .github/workflows/validate-packages.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: validate-packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  debs:
+    uses: ./.github/workflows/gaokun3-package-debs.yml
+    with:
+      publish_release: false
+  rpms:
+    uses: ./.github/workflows/gaokun3-package-rpms.yml
+    with:
+      publish_release: false

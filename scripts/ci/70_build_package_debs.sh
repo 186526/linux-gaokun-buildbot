@@ -5,6 +5,7 @@ set -euo pipefail
 : "${WORKDIR:?missing WORKDIR}"
 : "${ARTIFACT_DIR:?missing ARTIFACT_DIR}"
 : "${KERNEL_TAG:?missing KERNEL_TAG}"
+: "${KERNEL_COMMIT:?missing KERNEL_COMMIT}"
 : "${PACKAGE_RELEASE_TAG:?missing PACKAGE_RELEASE_TAG}"
 
 BUILD_EL2="${BUILD_EL2:-false}"
@@ -139,6 +140,8 @@ build_kernel_variant() {
 
   rsync -a --delete --exclude '.git' "$src_dir/" "$headers_tree/"
   rsync -a "$out_dir/" "$headers_tree/"
+  # The output Makefile points at the CI checkout; ship the portable source one.
+  install -Dm644 "$src_dir/Makefile" "$headers_tree/Makefile"
   find "$headers_tree" -type f \
     \( -name '*.o' -o -name '*.ko' -o -name '*.a' -o -name '*.cmd' -o -name '*.mod' -o -name '*.mod.c' \) \
     -delete
@@ -286,6 +289,8 @@ cat >"$ARTIFACT_DIR/package-manifest.json" <<EOF
 {
   "package_release_tag": "${PACKAGE_RELEASE_TAG}",
   "kernel_tag": "${KERNEL_TAG}",
+  "kernel_commit": "${KERNEL_COMMIT:?missing KERNEL_COMMIT}",
+  "buildbot_commit": "${BUILDBOT_COMMIT}",
   "build_el2": ${BUILD_EL2},
   "build_kernelsu": ${BUILD_KERNELSU},
   "built_at_utc": "${BUILD_TIME_UTC}",

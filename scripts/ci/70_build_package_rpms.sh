@@ -5,6 +5,7 @@ set -euo pipefail
 : "${WORKDIR:?missing WORKDIR}"
 : "${ARTIFACT_DIR:?missing ARTIFACT_DIR}"
 : "${KERNEL_TAG:?missing KERNEL_TAG}"
+: "${KERNEL_COMMIT:?missing KERNEL_COMMIT}"
 : "${PACKAGE_RELEASE_TAG:?missing PACKAGE_RELEASE_TAG}"
 
 BUILD_EL2="${BUILD_EL2:-false}"
@@ -68,6 +69,9 @@ build_variant_rpms() {
   local krel="$5"
   local dtb_name="$6"
 
+  local is_default_kernel="0"
+  [[ -z "$pkg_suffix" ]] && is_default_kernel="1"
+
   local kernel_pkg="kernel-gaokun3${pkg_suffix}"
   local modules_pkg="kernel-modules-gaokun3${pkg_suffix}"
   local devel_pkg="kernel-devel-gaokun3${pkg_suffix}"
@@ -97,7 +101,8 @@ build_variant_rpms() {
     "$kernel_stage/boot/dtb-$krel/qcom/$dtb_name"
   cat > "$kernel_stage/usr/lib/dracut/dracut.conf.d/$dracut_conf" <<'EOF'
 hostonly="no"
-add_drivers+=" btrfs nvme phy-qcom-qmp-pcie phy-qcom-qmp-combo phy-qcom-qmp-usb phy-qcom-snps-femto-v2 usb-storage uas typec pci-pwrctrl-pwrseq ath11k ath11k_pci i2c-hid-of lpasscc_sc8280xp snd-soc-sc8280xp pinctrl_sc8280xp_lpass_lpi "
+# Keep btrfs available for existing installations; new images use ext4.
+add_drivers+=" ext4 btrfs nvme phy-qcom-qmp-pcie phy-qcom-qmp-combo phy-qcom-qmp-usb phy-qcom-snps-femto-v2 usb-storage uas typec pci-pwrctrl-pwrseq ath11k ath11k_pci i2c-hid-of lpasscc_sc8280xp snd-soc-sc8280xp pinctrl_sc8280xp_lpass_lpi "
 install_items+=" /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcslpi8280.mbn /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcadsp8280.mbn /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qccdsp8280.mbn /lib/firmware/qcom/sc8280xp/SC8280XP-HUAWEI-GAOKUN3-tplg.bin /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/audioreach-tplg.bin "
 EOF
 
@@ -134,7 +139,8 @@ EOF
     "@SOURCE_NAME@" "$kernel_tar" \
     "@KREL_VERSION@" "$krel_version" \
     "@KREL@" "$krel" \
-    "@DTB_FILE@" "$dtb_name"
+    "@DTB_FILE@" "$dtb_name" \
+    "@IS_DEFAULT_KERNEL@" "$is_default_kernel"
 
   render_spec_template \
     "$GAOKUN_DIR/packaging/rpm/kernel-modules-gaokun3.spec.in" \
@@ -185,7 +191,11 @@ build_firmware_rpm() {
 
   rm -rf "$firmware_stage"
   mkdir -p "$firmware_stage/usr/lib/firmware"
-  cp -a "$GAOKUN_DIR/firmware/." "$firmware_stage/usr/lib/firmware/"
+  mkdir -p "$firmware_stage/usr/lib/firmware/qcom/sc8280xp"
+  cp -a "$GAOKUN_DIR/firmware/qcom/sc8280xp/HUAWEI" \
+    "$firmware_stage/usr/lib/firmware/qcom/sc8280xp/"
+  ln -s HUAWEI/gaokun3/audioreach-tplg.bin \
+    "$firmware_stage/usr/lib/firmware/qcom/sc8280xp/SC8280XP-HUAWEI-GAOKUN3-tplg.bin"
 
   prepare_tarball "$firmware_tar" "$firmware_stage"
 
@@ -252,6 +262,8 @@ cat >"$ARTIFACT_DIR/package-manifest.json" <<EOF
 {
   "package_release_tag": "${PACKAGE_RELEASE_TAG}",
   "kernel_tag": "${KERNEL_TAG}",
+  "kernel_commit": "${KERNEL_COMMIT:?missing KERNEL_COMMIT}",
+  "buildbot_commit": "${BUILDBOT_COMMIT}",
   "build_el2": ${BUILD_EL2},
   "build_kernelsu": ${BUILD_KERNELSU},
   "built_at_utc": "${BUILD_TIME_UTC}",

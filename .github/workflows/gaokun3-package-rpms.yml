@@ -58,6 +58,7 @@ jobs:
   build-package-rpms:
     outputs:
       package_release_tag: ${{ steps.release_meta.outputs.package_release_tag }}
+    timeout-minutes: 180
     runs-on: ubuntu-24.04-arm
     env:
       TZ: UTC
@@ -78,6 +79,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Load reviewed build inputs
+        run: |
+          set -euo pipefail
+          . ./build.env
+          echo "BUILDBOT_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          if [[ "$BUILD_EL2" == true && -z "$KERNEL_EL2_COMMIT" ]]; then
+            echo 'EL2 migration is not ready: KERNEL_EL2_COMMIT is unset.' >&2
+            exit 1
+          fi
+          for name in KERNEL_REPOSITORY KERNEL_TAG KERNEL_COMMIT KERNEL_EL2_COMMIT FEDORA_RELEASE UBUNTU_RELEASE; do
+            printf '%s=%s\n' "$name" "${!name}" >> "$GITHUB_ENV"
+          done
+
       - name: Checkout Linux source
         run: |
           set -euxo pipefail
@@ -87,6 +101,15 @@ jobs:
           esac
           mkdir -p "$(dirname "$KERN_SRC")"
           git clone --depth 1 --branch "$KERNEL_TAG" "$KERNEL_BASE_URL" "$KERN_SRC"
+
+      - name: Checkout EL2 Linux source
+        if: env.BUILD_EL2 == 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.KERNEL_REPOSITORY }}
+          ref: ${{ env.KERNEL_EL2_COMMIT }}
+          fetch-depth: 1
+          path: build-packages/linux-el2
 
       - name: Install host dependencies
         run: |
@@ -148,13 +171,15 @@ jobs:
             -e KERN_OUT_EL2="$KERN_OUT_EL2" \
             -e ARTIFACT_DIR="$ARTIFACT_DIR" \
             -e KERNEL_TAG="$KERNEL_TAG" \
+            -e KERNEL_COMMIT="$KERNEL_COMMIT" \
+            -e BUILDBOT_COMMIT="$BUILDBOT_COMMIT" \
             -e PACKAGE_RELEASE_TAG="$PACKAGE_RELEASE_TAG" \
             -e BUILD_EL2="$BUILD_EL2" \
             -e BUILD_KERNELSU="$BUILD_KERNELSU" \
             --user root \
-            "fedora:44" \
+            "fedora:${FEDORA_RELEASE}" \
             bash -euxo pipefail -c '
-              dnf -y install gcc make rpm-build kmod elfutils-libelf-devel tar gzip rsync
+              dnf -y install git gcc make rpm-build kmod elfutils-libelf-devel tar gzip rsync
               chmod +x scripts/ci/70_build_package_rpms.sh
               scripts/ci/70_build_package_rpms.sh
             '
@@ -163,12 +188,15 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: gaokun3-package-rpms
+          if-no-files-found: error
+          retention-days: 7
           path: |
             ${{ env.ARTIFACT_DIR }}/*.rpm
             ${{ env.ARTIFACT_DIR }}/package-manifest.json
             ${{ env.ARTIFACT_DIR }}/package-release-body.md
 
       - name: Publish package release
+        if: inputs.publish_release
         uses: softprops/action-gh-release@v2.6.1
         with:
           tag_name: ${{ steps.release_meta.outputs.package_release_tag }}

@@ -27,7 +27,12 @@ cp -a boot %{buildroot}/
 cp -a usr %{buildroot}/
 
 %posttrans
-if [ "$1" -ge 1 ] && command -v dracut >/dev/null 2>&1 && command -v kernel-install >/dev/null 2>&1; then
+# bootctl resolves the ESP the same way kernel-install does. During image builds
+# this package is installed into a rootfs that has none, and the entries written
+# there would sit under /boot, where kernel-install would later prefer them over
+# the real ESP.
+if [ "$1" -ge 1 ] && command -v kernel-install >/dev/null 2>&1 &&
+   bootctl --print-esp-path >/dev/null 2>&1; then
     temp_conf_root="$(mktemp -d)"
     cleanup() {
         rm -rf "$temp_conf_root"
@@ -47,21 +52,31 @@ if [ "$1" -ge 1 ] && command -v dracut >/dev/null 2>&1 && command -v kernel-inst
 
     install -d /etc/kernel/install.d
     ln -sf /dev/null /etc/kernel/install.d/51-dracut-rescue.install
-    kernel-install --entry-token=machine-id remove 0-rescue >/dev/null 2>&1 || :
+    kernel-install --entry-token=os-id remove 0-rescue || :
     rm -rf /boot/*0-rescue* \
            /boot/efi/*/0-rescue \
-           /boot/efi/loader/entries/*-0-rescue.conf >/dev/null 2>&1 || :
+           /boot/efi/loader/entries/*-0-rescue.conf
 
-    dracut --force --kver @KREL@ >/dev/null 2>&1 || :
-    kernel-install --entry-token=machine-id remove @KREL@ >/dev/null 2>&1 || :
+    # No dracut run here: kernel-install builds the initrd itself, and anything
+    # made beforehand is rebuilt rather than reused.
+    kernel-install --entry-token=os-id remove @KREL@ || :
     KERNEL_INSTALL_CONF_ROOT="$temp_conf_root" \
-        kernel-install --make-entry-directory=yes --entry-token=machine-id add \
-        @KREL@ /boot/vmlinuz-@KREL@ >/dev/null 2>&1 || :
+        kernel-install --make-entry-directory=yes --entry-token=os-id add \
+        @KREL@ /boot/vmlinuz-@KREL@ ||
+        echo "warning: kernel-install failed for @KREL@, it has no boot entry" >&2
+
+    # As on stock Fedora, installing a kernel makes it the one that boots.
+    # Only the standard kernel claims the default; EL2 is opted into from the
+    # boot menu, so it must never take it.
+    if [ "@IS_DEFAULT_KERNEL@" = "1" ] && [ -f /boot/efi/loader/loader.conf ]; then
+        sed -i "s|^default .*|default $(. /etc/os-release; echo "$ID")-@KREL@.conf|" \
+            /boot/efi/loader/loader.conf
+    fi
 fi
 
 %preun
 if [ "$1" -eq 0 ] && command -v kernel-install >/dev/null 2>&1; then
-    kernel-install --entry-token=machine-id remove @KREL@ >/dev/null 2>&1 || :
+    kernel-install --entry-token=os-id remove @KREL@ || :
 fi
 
 %files

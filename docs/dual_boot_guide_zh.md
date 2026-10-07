@@ -29,7 +29,7 @@
 完成后，内置硬盘 EFI 分区根目录通常应包含如下内容：
 - `EFI`
 - `loader`
-- `<machine-id>` 或其他 `kernel-install` entry-token 目录
+- `fedora` 或 `ubuntu`（`kernel-install` entry token）
 - `firmware`（若镜像包含 EL2）
 - `tcblaunch.exe`（若镜像包含 EL2）
 
@@ -43,8 +43,8 @@ Windows 一般可由 `systemd-boot` 自动探测，所以无需额外修改 Wind
 说明：
 
 - 现在镜像使用标准 `kernel-install` + BLS 布局，不再固定使用 `gaokun3/<distro>/<kernel-release>/...` 目录。
-- 默认情况下，Gaokun3 镜像会使用 `--entry-token=machine-id`，因此 ESP 中通常会出现 `/loader/entries/<machine-id>-<kernel-release>.conf`，以及 `/<machine-id>/<kernel-release>/linux|initrd|*.dtb` 这类目录结构。
-- 若发行版或用户改过 `kernel-install --entry-token`，顶层目录名可能不是 `machine-id`，但仍会遵循同样的 BLS 规则。
+- 新镜像在 `/etc/kernel/entry-token` 中保存 `fedora` 或 `ubuntu`，条目为 `/loader/entries/<distro>-<kernel-release>.conf`，内核、initrd 和 DTB 放在 `/<distro>/<kernel-release>/`。
+- 旧 machine-id 条目可以保留作回退，确认新条目启动成功后再清理；详见 [启动布局](boot-layout.md)。
 
 ## 四、修改 EFI 分区卷序列号
 
@@ -56,7 +56,7 @@ Windows 一般可由 `systemd-boot` 自动探测，所以无需额外修改 Wind
 
 - 重启后应进入 `systemd-boot` 启动菜单。
 - 菜单中可选择启动 Windows 或 Linux 发行版。
-- 进入 Linux 发行版后可以使用 gnome-disk 等磁盘工具或 growpart/resize2fs/btrfs 等命令扩容 rootfs 分区和文件系统到整个剩余空间。
+- 进入 Linux 发行版后可以使用 gnome-disk 等磁盘工具或 growpart/resize2fs 等命令扩容 rootfs 分区和文件系统到整个剩余空间。
 
 ## 补充说明（EL2 可选）
 

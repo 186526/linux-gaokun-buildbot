@@ -77,11 +77,23 @@ jobs:
       ROOTFS_DIR: ${{ github.workspace }}/build-ubuntu/rootfs
       ARTIFACT_DIR: ${{ github.workspace }}/build-ubuntu/artifacts
       PACKAGE_DEBS_DIR: ${{ github.workspace }}/build-ubuntu/package-debs
-      IMAGE_FILE: ${{ github.workspace }}/build-ubuntu/ubuntu-${{ github.event.inputs.ubuntu_release }}-gaokun3.img
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - name: Load reviewed build inputs
+        run: |
+          set -euo pipefail
+          . ./build.env
+          if [[ "$BUILD_EL2" == true && -z "$KERNEL_EL2_COMMIT" ]]; then
+            echo 'EL2 migration is not ready: KERNEL_EL2_COMMIT is unset.' >&2
+            exit 1
+          fi
+          for name in KERNEL_REPOSITORY KERNEL_TAG KERNEL_COMMIT KERNEL_EL2_COMMIT FEDORA_RELEASE UBUNTU_RELEASE; do
+            printf '%s=%s\n' "$name" "${!name}" >> "$GITHUB_ENV"
+          done
+          echo "IMAGE_FILE=$WORKDIR/ubuntu-${UBUNTU_RELEASE}-gaokun3.img" >> "$GITHUB_ENV"
 
       - name: Install host dependencies
         run: |
@@ -235,13 +247,9 @@ jobs:
 
           # Download and extract ubuntu-base as rootfs foundation
           UBUNTU_BASE_URL="https://cdimages.ubuntu.com/ubuntu-base/releases/${UBUNTU_RELEASE}/release/ubuntu-base-${UBUNTU_RELEASE}-base-arm64.tar.gz"
-          UBUNTU_BASE_BETA_URL="https://cdimages.ubuntu.com/ubuntu-base/releases/${UBUNTU_RELEASE}/beta/ubuntu-base-${UBUNTU_RELEASE}-beta-base-arm64.tar.gz"
           UBUNTU_BASE_TAR="$WORKDIR/ubuntu-base-arm64.tar.gz"
 
-          if ! curl -fsSL -o "$UBUNTU_BASE_TAR" "$UBUNTU_BASE_URL"; then
-            echo "Release tarball not found, trying beta..."
-            curl -fsSL -o "$UBUNTU_BASE_TAR" "$UBUNTU_BASE_BETA_URL"
-          fi
+          curl -fsSL -o "$UBUNTU_BASE_TAR" "$UBUNTU_BASE_URL"
 
           sudo tar -xzf "$UBUNTU_BASE_TAR" -C "$ROOTFS_DIR"
 
@@ -274,7 +282,7 @@ jobs:
               iputils-ping iproute2 net-tools dnsutils traceroute \
               xz-utils unzip zip bzip2 zstd p7zip-full \
               wget curl ca-certificates gnupg lsb-release \
-              ssh less file sudo
+              ssh less file sudo network-manager systemd-resolved
 
             install -d -m 0755 /etc/apt/keyrings
             wget -qO- https://packages.mozilla.org/apt/repo-signing-key.gpg | \

@@ -49,7 +49,7 @@ if [ "$(stat -c '%s' "$ZST_FILE")" -lt "$SPLIT_THRESHOLD_BYTES" ]; then
 - Kernel Release: \`${KREL}\`
 - Architecture: \`arm64\`
 ${EL2_RELEASE_BLOCK}
-- Root Filesystem: \`Btrfs (@, @home, @var)\`
+- Root Filesystem: \`ext4 (single root partition)\`
 - Bootloader: \`systemd-boot\`
 - Image File: \`${IMAGE_BASENAME}\`
 - Compressed File: \`${IMAGE_BASENAME}.zst\`
@@ -61,10 +61,10 @@ ${EL2_RELEASE_BLOCK}
 - Excluded Packages: \`${EXCLUDED_PACKAGES}\`
 - Extra Packages: \`${EXTRA_PACKAGES}\`
 
-## Default Login
+## First Boot
 
-- Username: \`user\`
-- Password: \`user\`
+- No account is shipped. GNOME initial setup asks for your name, password and
+  language on first boot, as on a stock Fedora install.
 ${EL2_PAYLOAD_BLOCK}
 EOF
 else
@@ -80,7 +80,7 @@ else
 - Kernel Release: \`${KREL}\`
 - Architecture: \`arm64\`
 ${EL2_RELEASE_BLOCK}
-- Root Filesystem: \`Btrfs (@, @home, @var)\`
+- Root Filesystem: \`ext4 (single root partition)\`
 - Bootloader: \`systemd-boot\`
 - Image File: \`${IMAGE_BASENAME}\`
 - Compressed File: \`${IMAGE_BASENAME}.zst\`
@@ -92,10 +92,10 @@ ${EL2_RELEASE_BLOCK}
 - Excluded Packages: \`${EXCLUDED_PACKAGES}\`
 - Extra Packages: \`${EXTRA_PACKAGES}\`
 
-## Default Login
+## First Boot
 
-- Username: \`user\`
-- Password: \`user\`
+- No account is shipped. GNOME initial setup asks for your name, password and
+  language on first boot, as on a stock Fedora install.
 
 ${EL2_PAYLOAD_BLOCK}
 
@@ -115,4 +115,7 @@ TAG_NAME="fedora${FEDORA_RELEASE}-${KREL}$(if [[ "$BUILD_EL2" == "true" ]]; then
 echo "$TAG_NAME" > "$WORKDIR/tag-name.txt"
 echo "$KREL" > "$WORKDIR/kernel-release-export.txt"
 echo "$PACKAGE_GLOB" > "$WORKDIR/package-glob.txt"
-echo "$(basename "$RELEASE_BODY_FILE")" > "$WORKDIR/release-body-file.txt"
+basename "$RELEASE_BODY_FILE" > "$WORKDIR/release-body-file.txt"
+
+# Cover the exact downloadable image files, including split parts if needed.
+(cd "$ARTIFACT_DIR" && sha256sum $PACKAGE_GLOB > SHA256SUMS)
