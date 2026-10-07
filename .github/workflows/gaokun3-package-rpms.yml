@@ -107,6 +107,9 @@ jobs:
           # is a gitlab.com tree that the github-only helper cannot fetch, so it
           # is cloned by its real tag (KERNEL_XANMOD_TAG) and the resolved commit
           # is recorded for the manifest. KERNEL_TAG stays the naming label.
+          # The xanmod tree is intentionally not checked for gaokun3_defconfig:
+          # that file is created by patches/0099, which 20_build_kernel_variants.sh
+          # applies later, so it is absent from the freshly cloned tag.
           # shellcheck source=scripts/lib/kernel_source.sh
           . ./scripts/lib/kernel_source.sh
           if [[ "${KERNEL_BASE:-mainline}" == "xanmod" ]]; then
@@ -121,10 +124,6 @@ jobs:
             git -C "$KERN_SRC" checkout --detach FETCH_HEAD
             KERNEL_COMMIT="$(git -C "$KERN_SRC" rev-parse HEAD)"
             echo "KERNEL_COMMIT=$KERNEL_COMMIT" >> "$GITHUB_ENV"
-            if [[ ! -f "$KERN_SRC/arch/arm64/configs/gaokun3_defconfig" ]]; then
-              echo "XanMod $KERNEL_XANMOD_TAG has no gaokun3_defconfig" >&2
-              exit 1
-            fi
           else
             prepare_kernel_source "$KERN_SRC" "$KERNEL_COMMIT"
           fi
