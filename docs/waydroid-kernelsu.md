@@ -151,7 +151,7 @@ KernelSU Manager v3.3.0 发布早于 KernelSU 官方 SIGSYS 降级修复。更�
 
 ## Waydroid Manager 未识别的限制
 
-本次目标机还确认了第二个独立问题。当前运行内核的配置为：
+本次目标机还确认了第二个独立问题。原运行内核的配置为：
 
 ```text
 CONFIG_KSU=y
@@ -164,15 +164,30 @@ Manager 启动后能够加载 `libksud.so`，但内核日志仍出现：
 KernelSU: ksu ioctl: permission denied for cmd=0x4b01 uid=10147
 ```
 
-`0x4b01` 是 `GRANT_ROOT`。这表示 `me.weishu.kernelsu` 的 appid `10147` 尚未成为 KernelSU manager，不能执行 root 操作。目标机的 `/data/adb` 为空，且没有 `ksu_debug_manager_appid` 参数，因此不能通过运行时文件权限或重装 APK 修复这个状态。
+`0x4b01` 是 `GRANT_ROOT`。这表示 `me.weishu.kernelsu` 的 appid `10147` 尚未成为 KernelSU manager，不能执行 root 操作。原运行内核没有 `ksu_debug_manager_appid` 参数，因此不能通过运行时文件权限或重装 APK 修复这个状态。
 
-上游 KernelSU 的 manager 识别会扫描 Android 包列表和 APK。当前内核缺少调试接口，无法在启动后直接设置 appid。本仓库的 `scripts/ci/lib/kernelsu.sh` 和 `scripts/local/build_kernel.sh` 已经同时启用并检查：
+本仓库的 `scripts/ci/lib/kernelsu.sh` 和 `scripts/local/build_kernel.sh` 已经同时启用并检查：
 
 ```text
 CONFIG_KSU_DEBUG=y
 ```
 
-本次已经完成标准 Gaokun3 内核的本地编译，产物为 `7.2.9-gaokun3-ksu-xanmod1`，并确认 `.config` 包含 `CONFIG_KSU_DEBUG=y`。由于目标机 SSH 账户当前指向不存在的 `/usr/bin/zsh`，该内核尚未安装、尚未启动，Manager 识别和 root 结果仍待目标机恢复 SSH 后验证。
+本次本地最终构建使用以下内核版本：
+
+```text
+standard: 7.2.9-gaokun3-xanmod1
+EL2:      7.2.9-gaokun3-el2-ksu-dsi-fix-xanmod1
+```
+
+最终 EL2 构建已包含并编译验证以下修复链：
+
+- XanMod `0018-drm-msm-dsi-fix-PLL-init-in-bonded-mode.patch`；
+- media Venus 的 SC8280XP resource 使用修复；
+- HI846、DSC interface data width 和面板方向修复；
+- EL2 remoteproc `0006`、`0009`、`0010`、`0016`，以及补齐 `qcom_q6v5_read_smp2p_state()` 的 Qualcomm detached-state 前置补丁；
+- `CONFIG_KSU=y`、`CONFIG_KSU_DEBUG=y`、`CONFIG_KPROBES=y`、`CONFIG_TRACEPOINTS=y`、`CONFIG_FTRACE=y`。
+
+最终 DEB 已在本地生成，manifest 标记为 `build_el2=true` 和 `build_kernelsu=true`。目标机在最终包安装前再次离线，因此该版本尚未安装或启动，Manager 识别和 root 结果仍待目标机恢复 SSH 后验证。不能使用此前缺少 XanMod `0018` 的旧内核验证显示或 KernelSU。
 
 目标机恢复后，使用容器命令读取 Manager UID。目标机的 Waydroid Python CLI 会把部分 Android 短参数错误解析为自身参数，因此使用 `lxc-attach`：
 
