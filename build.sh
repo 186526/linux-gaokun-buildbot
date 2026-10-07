@@ -23,20 +23,27 @@ WORKDIR="${WORKDIR:-$GAOKUN_DIR/build}"
 mkdir -p "$WORKDIR"
 WORKDIR="$(cd "$WORKDIR" && pwd)"
 KERN_SRC="${KERN_SRC:-$WORKDIR/linux}"
-KERN_SRC_BASE="$KERN_SRC"
-KERN_SRC_EL2="${KERN_SRC_EL2:-$WORKDIR/linux-el2}"
+if [[ "${BUILD_EL2:-false}" == true ]]; then
+  # EL2 is patch-based: scripts/ci/20_build_kernel_variants.sh applies
+  # patches/el2 on top of the prepared KERN_SRC tree once the standard variant
+  # has been built and snapshotted. There is no separate EL2 commit to prepare,
+  # so the EL2 variant reuses KERN_SRC, and KERN_SRC_BASE defaults to a distinct
+  # snapshot so the standard packages keep their pre-EL2 headers tree.
+  KERN_SRC_BASE="${KERN_SRC_BASE:-$WORKDIR/linux-base}"
+  KERN_SRC_EL2="$KERN_SRC"
+else
+  # Without EL2 the EL2 paths are unused; KERN_SRC_BASE stays a no-op snapshot
+  # of KERN_SRC so the package scripts can read the standard source tree.
+  KERN_SRC_BASE="${KERN_SRC_BASE:-$KERN_SRC}"
+  KERN_SRC_EL2="${KERN_SRC_EL2:-$WORKDIR/linux-el2}"
+fi
 KERN_OUT="${KERN_OUT:-$WORKDIR/kernel-out}"
 KERN_OUT_EL2="${KERN_OUT_EL2:-$WORKDIR/kernel-out-el2}"
 ARTIFACT_DIR="${ARTIFACT_DIR:-$WORKDIR/artifacts}"
 BUILD_EL2="${BUILD_EL2:-false}"
-if [[ "$BUILD_EL2" == true && -z "$KERNEL_EL2_COMMIT" ]]; then
-  echo 'EL2 migration is not ready; KERNEL_EL2_COMMIT is unset.' >&2
-  exit 1
-fi
+
 prepare_kernel_source "$KERN_SRC" "$KERNEL_COMMIT"
-if [[ "$BUILD_EL2" == true ]]; then
-  prepare_kernel_source "$KERN_SRC_EL2" "$KERNEL_EL2_COMMIT"
-fi
+
 export GAOKUN_DIR WORKDIR KERN_SRC KERN_SRC_BASE KERN_SRC_EL2 KERN_OUT KERN_OUT_EL2
 export ARTIFACT_DIR BUILD_EL2 KERNEL_TAG KERNEL_REPOSITORY KERNEL_COMMIT KERNEL_EL2_COMMIT
 export PACKAGE_RELEASE_TAG="${PACKAGE_RELEASE_TAG:-local-$KERNEL_TAG}"
