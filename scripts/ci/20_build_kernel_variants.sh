@@ -16,6 +16,7 @@ KERN_OUT="${KERN_OUT:-$WORKDIR/kernel-out}"
 KERN_SRC_BASE="${KERN_SRC_BASE:-$KERN_SRC}"
 KERN_SRC_EL2="${KERN_SRC_EL2:-$WORKDIR/linux-el2}"
 KERN_OUT_EL2="${KERN_OUT_EL2:-}"
+KERN_LOCALVERSION_EL2="${KERN_LOCALVERSION_EL2:--gaokun3-el2}"
 BUILD_EL2="${BUILD_EL2:-false}"
 # Opt-in: when true, every requested variant is built with the pinned KernelSU
 # integration applied before its kernel is configured.
@@ -196,7 +197,7 @@ git -C "$KERN_SRC_EL2" add -A
 git -C "$KERN_SRC_EL2" commit -m "Apply EL2 patches"
 
 ccache -z || true
-build_variant "$KERN_SRC_EL2" "$KERN_OUT_EL2" "-gaokun3-el2" "$BUILD_KERNELSU"
+build_variant "$KERN_SRC_EL2" "$KERN_OUT_EL2" "$KERN_LOCALVERSION_EL2" "$BUILD_KERNELSU"
 ccache -s || true
 
 EL2_KREL="$(cat "$KERN_OUT_EL2/include/config/kernel.release")"

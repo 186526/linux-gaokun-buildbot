@@ -7,9 +7,15 @@ import unittest
 
 HELPER = Path(__file__).resolve().parents[1] / 'scripts/lib/kernel_source.sh'
 SELECT_BASE = Path(__file__).resolve().parents[1] / 'scripts/ci/lib/select_base.sh'
+KERNEL_VARIANTS = Path(__file__).resolve().parents[1] / 'scripts/ci/20_build_kernel_variants.sh'
 
 
 class SourcePreparation(unittest.TestCase):
+    def test_el2_localversion_is_overridable_with_compatible_default(self):
+        script = KERNEL_VARIANTS.read_text()
+        self.assertIn('KERN_LOCALVERSION_EL2="${KERN_LOCALVERSION_EL2:--gaokun3-el2}"', script)
+        self.assertIn('build_variant "$KERN_SRC_EL2" "$KERN_OUT_EL2" "$KERN_LOCALVERSION_EL2"', script)
+
     def test_xanmod_dsc_change_requires_all_anchors(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
