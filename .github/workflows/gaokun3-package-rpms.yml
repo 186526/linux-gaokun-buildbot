@@ -15,6 +15,11 @@ on:
         options:
           - mainline
           - xanmod
+      publish_release:
+        description: Publish packages as a GitHub release
+        required: false
+        default: false
+        type: boolean
       build_el2:
         description: Build extra -gaokun3-el2 kernel packages
         required: true
@@ -29,13 +34,19 @@ on:
     inputs:
       kernel_tag:
         description: Linux kernel tag
-        required: true
+        required: false
+        default: "v7.2-rc2"
         type: string
       kernel_base:
         description: Kernel base (mainline or xanmod)
         required: false
         default: "mainline"
         type: string
+      publish_release:
+        description: Publish packages as a GitHub release
+        required: false
+        default: false
+        type: boolean
       build_el2:
         description: Build extra -gaokun3-el2 kernel packages
         required: false
@@ -71,8 +82,8 @@ jobs:
       KERN_SRC: ${{ github.workspace }}/build-packages/kernel-src
       KERN_SRC_BASE: ${{ github.workspace }}/build-packages/kernel-src-base
       KERN_OUT: ${{ github.workspace }}/build-packages/kernel-out
-      KERN_SRC_EL2: ${{ github.workspace }}/build-packages/kernel-src
       KERN_OUT_EL2: ${{ github.workspace }}/build-packages/kernel-out-el2
+      EL2_SRC: ${{ github.workspace }}/build-packages/linux-el2
       ARTIFACT_DIR: ${{ github.workspace }}/build-packages/artifacts
 
     steps:
@@ -110,6 +121,10 @@ jobs:
           ref: ${{ env.KERNEL_EL2_COMMIT }}
           fetch-depth: 1
           path: build-packages/linux-el2
+
+      - name: Pin the EL2 source path
+        if: env.BUILD_EL2 == 'true'
+        run: echo "KERN_SRC_EL2=$EL2_SRC" >> "$GITHUB_ENV"
 
       - name: Install host dependencies
         run: |
