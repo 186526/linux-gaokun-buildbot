@@ -232,9 +232,11 @@ sudo lxc-attach -P /var/lib/waydroid/lxc -n waydroid -u "$appid" -- \
 验证内核仍然包含 KernelSU：
 
 ```bash
-grep CONFIG_KSU /boot/config-$(uname -r)
+zcat /proc/config.gz | grep CONFIG_KSU      # 运行内核内嵌配置
 grep -E 'ksu_supercall|ksu_seccomp|kernelsu_init' /proc/kallsyms
 ```
+
+`/proc/config.gz` 反映的是运行内核自身的配置；若只需确认磁盘上安装的配置，也可用 `grep CONFIG_KSU /boot/config-$(uname -r)`，但 `/boot/config-*` 可能已被更新的构建覆盖，不代表当前运行内核。
 
 本次修复使用的备份后缀为：
 
@@ -268,12 +270,14 @@ CONFIG_TRACEPOINTS=y
 
 ### 关键证据
 
-标准内核 `7.2.9-gaokun3-xanmod1` 的 `/boot/config-*` 只有 `CONFIG_KALLSYMS=y`，没有 `CONFIG_KALLSYMS_ALL`：
+当时运行的标准内核 `7.2.9-gaokun3-xanmod1` 内嵌配置（`/proc/config.gz`，即运行内核自身携带的配置）只有 `CONFIG_KALLSYMS=y`，没有 `CONFIG_KALLSYMS_ALL`：
 
 ```text
 CONFIG_KALLSYMS=y
 # CONFIG_KALLSYMS_ALL is not set
 ```
+
+需要区分两处配置来源：运行内核的配置是 `/proc/config.gz`；磁盘上的 `/boot/config-*` 会在重新构建安装后被覆盖，因此 `/boot/config-*` 不能代表运行内核。2026-10-08 的复核中 `/boot/config-7.2.9-gaokun3-xanmod1` 已含 `CONFIG_KALLSYMS_ALL=y`，而运行内核内嵌的 `/proc/config.gz` 仍为 `# CONFIG_KALLSYMS_ALL is not set`，两者不一致正说明运行内核是旧构建，详见“远端只读验证（2026-10-08）”。
 
 因此 `/proc/kallsyms` 中检索不到数据段符号，`sys_call_table` 和 `jiffies` 均出现 0 次：
 
@@ -352,7 +356,7 @@ CONFIG_KALLSYMS_ALL=y
 
 把 `CONFIG_KSU_DEBUG=y` 当作根因修复会掩盖真正的符号可见性问题。根因修复是启用 `CONFIG_KALLSYMS_ALL=y`；`CONFIG_KSU_DEBUG=y` 仅在需要手动指定管理器 appid 时作为调试手段保留。
 
-本节的“关键证据”来自标准内核 `7.2.9-gaokun3-xanmod1` 现有的 `/boot/config-*`、`/proc/kallsyms` 与启动日志，以及 KernelSU pin 版源码。截至本次只读验证，带 `CONFIG_KALLSYMS_ALL=y` 的修复内核已在目标机上构建并曾短暂启动一次，实测 `sys_call_table` 解析成功且 dispatcher 安装成功，但该次启动未运行 Waydroid，自动加冕尚未实测；详见下一节“远端只读验证（2026-10-08）”。
+本节的“关键证据”来自标准内核 `7.2.9-gaokun3-xanmod1` 运行时的内嵌配置 `/proc/config.gz`、`/proc/kallsyms` 与启动日志，以及 KernelSU pin 版源码。截至本次只读验证，带 `CONFIG_KALLSYMS_ALL=y` 的修复内核已在目标机上构建并曾短暂启动一次，实测 `sys_call_table` 解析成功且 dispatcher 安装成功，但该次启动未运行 Waydroid，自动加冕尚未实测；详见下一节“远端只读验证（2026-10-08）”。
 
 ## 远端只读验证（2026-10-08）
 
