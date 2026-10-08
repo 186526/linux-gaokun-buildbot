@@ -38,6 +38,14 @@ on:
         options:
           - gcc
           - clang
+      kernel_tune:
+        description: >-
+          Opt-in target tuning; the SC8280XP profile (sc8280xp / 8cx-gen3 /
+          8cxgen3) selects -march=armv8.4-a+crypto -mtune=cortex-x1c, other
+          values select -mtune=<cpu> only, empty keeps the portable baseline
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       kernel_tag:
@@ -70,6 +78,14 @@ on:
         required: false
         default: "gcc"
         type: string
+      kernel_tune:
+        description: >-
+          Opt-in target tuning; the SC8280XP profile (sc8280xp / 8cx-gen3 /
+          8cxgen3) selects -march=armv8.4-a+crypto -mtune=cortex-x1c, other
+          values select -mtune=<cpu> only, empty keeps the portable baseline
+        required: false
+        default: ""
+        type: string
     outputs:
       package_release_tag:
         description: Release tag containing the generated package bundle
@@ -91,6 +107,7 @@ jobs:
       BUILD_EL2: ${{ inputs.build_el2 || github.event.inputs.build_el2 || 'false' }}
       BUILD_KERNELSU: ${{ inputs.build_kernelsu || github.event.inputs.build_kernelsu || 'false' }}
       KERNEL_TOOLCHAIN: ${{ inputs.kernel_toolchain || github.event.inputs.kernel_toolchain || 'gcc' }}
+      KERNEL_TUNE: ${{ inputs.kernel_tune || github.event.inputs.kernel_tune || '' }}
       GAOKUN_DIR: ${{ github.workspace }}
       WORKDIR: ${{ github.workspace }}/build-packages
       KERN_SRC: ${{ github.workspace }}/build-packages/kernel-src

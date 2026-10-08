@@ -42,7 +42,9 @@ jobs:
           run_case gcc "" "" none
           run_case clang "" "LLVM=1 LLVM_IAS=1 LD=ld.lld" thin
           run_case clang none "LLVM=1 LLVM_IAS=1 LD=ld.lld" none
-          # KERNEL_TUNE appends KCFLAGS=-mtune=<cpu>; sc8280xp maps to cortex-x1.
+          # KERNEL_TUNE: the SC8280XP profile selects both the ISA and the
+          # microarchitecture (KCFLAGS=-march=armv8.4-a+crypto -mtune=cortex-x1c);
+          # a bare CPU name keeps the mtune-only portable armv8-a baseline.
           tune_out="$(
             KERNEL_TOOLCHAIN=clang KERNEL_TUNE=sc8280xp bash -c '
               . scripts/ci/lib/toolchain.sh
@@ -50,8 +52,19 @@ jobs:
               printf "%s" "${KERNEL_MAKE_ARGS[*]}"
             '
           )"
-          [[ "$tune_out" == *"KCFLAGS=-mtune=cortex-x1" ]] || {
-            echo "KERNEL_TUNE=sc8280xp did not add KCFLAGS=-mtune=cortex-x1 (got '$tune_out')" >&2
+          [[ "$tune_out" == *"KCFLAGS=-march=armv8.4-a+crypto -mtune=cortex-x1c" ]] || {
+            echo "KERNEL_TUNE=sc8280xp did not add the SC8280XP profile (got '$tune_out')" >&2
+            exit 1
+          }
+          tune_bare="$(
+            KERNEL_TOOLCHAIN=clang KERNEL_TUNE=cortex-a78 bash -c '
+              . scripts/ci/lib/toolchain.sh
+              resolve_kernel_toolchain
+              printf "%s" "${KERNEL_MAKE_ARGS[*]}"
+            '
+          )"
+          [[ "$tune_bare" == *"KCFLAGS=-mtune=cortex-a78" ]] || {
+            echo "KERNEL_TUNE=cortex-a78 did not add KCFLAGS=-mtune=cortex-a78 (got '$tune_bare')" >&2
             exit 1
           }
           if KERNEL_TOOLCHAIN=gcc KERNEL_LTO=thin bash -c '. scripts/ci/lib/toolchain.sh; resolve_kernel_toolchain' 2>/dev/null; then

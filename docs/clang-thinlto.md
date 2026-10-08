@@ -16,10 +16,14 @@ package names, and boot behaviour as a GCC build.
 `KERNEL_LTO=thin` with `KERNEL_TOOLCHAIN=gcc` is rejected, because
 `CONFIG_LTO_CLANG_THIN` needs the Clang toolchain.
 
+The `KERNEL_TUNE` selection is exported as the `kernel_tune` dispatch and
+`workflow_call` input on the package workflows, so a dispatched run selects the
+same profile a local build would. Leave it empty for the portable baseline.
+
 Local pinned build:
 
 ```bash
-KERNEL_TOOLCHAIN=clang BUILD_EL2=true ./build.sh debs
+KERNEL_TOOLCHAIN=clang KERNEL_TUNE=sc8280xp BUILD_EL2=true ./build.sh debs
 ```
 
 Legacy on-device helper:
@@ -33,8 +37,9 @@ scripts/local/build_kernel.sh < /dev/null
 ```
 
 The `checks.yml` workflow additionally runs `shellcheck` over
-`scripts/ci/lib/toolchain.sh`, and the package workflows expose a
-`kernel_toolchain` dispatch input.
+`scripts/ci/lib/toolchain.sh` and asserts the `KERNEL_TUNE` selection (the
+SC8280XP profile and a bare CPU name), and the package workflows expose
+`kernel_toolchain` and `kernel_tune` dispatch inputs.
 
 ## Exact make invocation
 
@@ -113,8 +118,9 @@ ISA selection (`-march`) and microarchitecture tuning (`-mtune`) are distinct:
   `-mgeneral-regs-only` constraint before any variant is configured, so an
   unsupported combination fails immediately. It is a no-op when `KERNEL_TUNE` is
   unset.
-- `KERNEL_TUNE` is not exposed as a CI workflow input: it is a local tuning
-  option, and the release package sets stay portable.
+- `KERNEL_TUNE` is exposed as the `kernel_tune` input on the package workflows
+  and defaults to empty, so a dispatched release run stays portable unless the
+  caller explicitly selects a profile.
 
 ## Kconfig handling and assertions
 
