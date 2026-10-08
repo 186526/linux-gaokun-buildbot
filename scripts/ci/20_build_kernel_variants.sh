@@ -140,6 +140,20 @@ apply_el2_series() {
   git -C "$KERN_SRC_EL2" apply "${patches[@]}"
 }
 
+# The XanMod series has silently dropped pinned gaokun3 device fixes before
+# (M42: audio gain ceiling, touchscreen mode-select/retry/predicted distance,
+# EC enable-GPIO error return). Assert the final source anchors on the prepared
+# tree now that the series is applied, before anything is configured or built,
+# so a regression fails loudly here instead of shipping a degraded device.
+assert_device_parity() {
+  local tree="$1"
+  echo "checking prepared device parity in $tree"
+  if ! bash "$GAOKUN_DIR/scripts/ci/check_device_parity.sh" "$tree"; then
+    echo "device parity check failed for $tree" >&2
+    exit 1
+  fi
+}
+
 mkdir -p "$WORKDIR"
 
 configure_git_identity "$KERN_SRC"
@@ -151,6 +165,8 @@ if [[ "$KERNEL_BASE" == "xanmod" ]]; then
 else
   test -f "$KERN_SRC/arch/arm64/configs/gaokun3_defconfig"
 fi
+
+assert_device_parity "$KERN_SRC"
 
 # Wire the pinned KernelSU into the patched source tree before the variant is
 # configured. Both the standard and the EL2 variant below are built from this
@@ -195,6 +211,11 @@ if [[ "$BUILD_KERNELSU" == "true" ]]; then
 fi
 git -C "$KERN_SRC_EL2" add -A
 git -C "$KERN_SRC_EL2" commit -m "Apply EL2 patches"
+
+# The EL2 series is applied on top of the prepared tree; re-assert parity here
+# so a tree that was assembled or overridden separately still fails before its
+# variant is built.
+assert_device_parity "$KERN_SRC_EL2"
 
 ccache -z || true
 build_variant "$KERN_SRC_EL2" "$KERN_OUT_EL2" "$KERN_LOCALVERSION_EL2" "$BUILD_KERNELSU"

@@ -22,3 +22,5 @@ jobs:
         run: python3 -m unittest discover -s tests -v
       - name: Check the DSC timing-width patch chain
         run: scripts/ci/check_display_dsc_fix.sh --series
+      - name: Preflight the prepared device parity inventory
+        run: scripts/ci/check_device_parity.sh --series
