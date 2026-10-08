@@ -20,3 +20,5 @@ jobs:
         run: shellcheck -S warning build.sh scripts/lib/kernel_source.sh scripts/ci/20_build_kernel_variants.sh scripts/local/build_kernel.sh
       - name: Check source protection and boot entries
         run: python3 -m unittest discover -s tests -v
+      - name: Check the DSC timing-width patch chain
+        run: scripts/ci/check_display_dsc_fix.sh --series

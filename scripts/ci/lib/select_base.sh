@@ -32,6 +32,20 @@ resolve_kernel_base() {
 # touches and fixed-string anchors that must all be present there before the
 # change counts as applied, so a rewritten or partial hunk cannot match by
 # accident and silently drop the patch. Only the xanmod base is consulted.
+#
+# Every anchor must come from the patch's post-image. An anchor that is already
+# present in the base before the patch runs makes the helper report "already
+# applied" for a change that is in fact missing, so the patch is skipped
+# silently. 0011 is exactly that trap: the XanMod 7.2.9 base already contains a
+# near-identical truncating form
+#
+#   timing->width = timing->width * drm_dsc_get_bpp_int(dsc) /
+#                   (dsc->bits_per_component * 3);
+#
+# and only 0005 + 0011 together turn it into the rounded DIV_ROUND_UP() form.
+# Anchoring on the rounded post-image means that if 0005 is ever dropped again,
+# 0011 no longer matches, so it is applied (and fails loudly) instead of being
+# skipped and silently leaving the truncating DSC timing width in the build.
 xanmod_change_is_present() {
   local repo_dir="$1"
   local patch_base="$2"
@@ -41,7 +55,7 @@ xanmod_change_is_present() {
     0011-drm-msm-dpu-restore-dsc-interface-data-width.patch)
       target_file="drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c"
       anchors+=('#include <drm/display/drm_dsc_helper.h>')
-      anchors+=('timing->width = timing->width * drm_dsc_get_bpp_int(dsc) /')
+      anchors+=('timing->width = DIV_ROUND_UP(timing->width * drm_dsc_get_bpp_int(dsc),')
       anchors+=('timing->dce_bytes_per_line = msm_dsc_get_bytes_per_line(dsc);')
       ;;
     *)
