@@ -11,7 +11,7 @@ package names, and boot behaviour as a GCC build.
 | -------- | ------ | ------- | ------ |
 | `KERNEL_TOOLCHAIN` | `gcc`, `clang` | `gcc` | Compiler/binutils family for the standard and EL2 variants |
 | `KERNEL_LTO` | `thin`, `none` | `thin` when `KERNEL_TOOLCHAIN=clang`, otherwise `none` | `thin` selects ThinLTO; `none` keeps LTO off |
-| `KERNEL_TUNE` | a CPU name (`cortex-x1`, `cortex-a78`, ...) or `sc8280xp` | unset | Appends `KCFLAGS=-mtune=<cpu>`; unset keeps the portable armv8-a baseline |
+| `KERNEL_TUNE` | a CPU name (`cortex-x1c`, `cortex-a78`, ...) or one of the SC8280XP aliases `sc8280xp` / `8cx-gen3` / `8cxgen3` | unset | Appends tuning to `KCFLAGS`; the SC8280XP aliases select `-march=armv8.4-a+crypto -mtune=cortex-x1c`, other values select `-mtune=<cpu>` only; unset keeps the portable armv8-a baseline |
 
 `KERNEL_LTO=thin` with `KERNEL_TOOLCHAIN=gcc` is rejected, because
 `CONFIG_LTO_CLANG_THIN` needs the Clang toolchain.
@@ -27,7 +27,7 @@ Legacy on-device helper:
 ```bash
 export KERNEL_TOOLCHAIN=clang
 export KERNEL_LTO=thin
-export KERNEL_TUNE=sc8280xp      # opt-in: KCFLAGS=-mtune=cortex-x1
+export KERNEL_TUNE=sc8280xp      # opt-in: -march=armv8.4-a+crypto -mtune=cortex-x1c
 export INSTALL_DEPS=true          # installs clang, lld, and llvm
 scripts/local/build_kernel.sh < /dev/null
 ```
@@ -45,11 +45,22 @@ In Clang mode the shared resolver `scripts/ci/lib/toolchain.sh` sets
 LLVM=1 LLVM_IAS=1 LD=ld.lld
 ```
 
-When `KERNEL_TUNE` is set it appends one more entry:
+When `KERNEL_TUNE` is set it appends one more entry. For the SC8280XP profile:
+
+```
+KCFLAGS=-march=armv8.4-a+crypto -mtune=cortex-x1c
+```
+
+For any other `KERNEL_TUNE` value:
 
 ```
 KCFLAGS=-mtune=<cpu>
 ```
+
+A `KCFLAGS` the caller already exported is preserved: the resolver appends the
+tuning to it rather than replacing it, because a `KCFLAGS=` on the make command
+line would otherwise override the environment and silently drop the caller's
+flags.
 
 so the same array carries the toolchain and the tuning into every make call.
 
@@ -75,20 +86,32 @@ The flags mean:
 In GCC mode `KERNEL_MAKE_ARGS` is empty and the make command lines are byte for
 byte the previous ones.
 
-## Microarchitecture tuning (opt-in)
+## Target tuning (opt-in)
 
-`KERNEL_TUNE` adds `KCFLAGS=-mtune=<cpu>` for the Snapdragon 8cx Gen 3
-(SC8280XP). The alias `sc8280xp` selects the Cortex-X1 prime core; any CPU name
-the compiler knows (`cortex-x1`, `cortex-a78`, ...) is accepted.
+`KERNEL_TUNE` selects the target tuning appended to `KCFLAGS` for the Snapdragon
+8cx Gen 3 (SC8280XP). Two forms are accepted:
 
-- Only `-mtune` is used, never `-march`. `-mtune` changes instruction scheduling
-  but keeps the armv8-a ISA baseline and the kernel ABI, so externally built
-  modules stay compatible. `-march` would let the compiler emit instructions
-  that not every cluster or a differently built module supports, and is
-  deliberately not offered.
+- the explicit SC8280XP profile aliases `sc8280xp`, `8cx-gen3`, `8cxgen3`, which
+  select both the ISA and the microarchitecture:
+  `-march=armv8.4-a+crypto -mtune=cortex-x1c`;
+- any other value, treated as a bare CPU name the compiler knows (`cortex-x1c`,
+  `cortex-a78`, ...), which selects `-mtune=<cpu>` only and keeps the portable
+  armv8-a ISA baseline.
+
+ISA selection (`-march`) and microarchitecture tuning (`-mtune`) are distinct:
+
+- `-march=armv8.4-a+crypto` sets the ISA the SC8280XP clusters implement
+  (Armv8.4-A plus the crypto extension). It tells the compiler which
+  instructions it may emit.
+- `-mtune=cortex-x1c` only affects instruction scheduling for the Cortex-X1C
+  prime core. It never changes the emitted ISA.
+- The SC8280XP profile is explicit and applies only to that profile: with
+  `KERNEL_TUNE` unset, or with any other CPU name, the previous portable
+  behaviour is unchanged, so externally built modules stay compatible.
 - `validate_kernel_tune` compiles a trivial translation unit with the caller's
-  compiler and `-mtune=<cpu>` before any variant is configured, so an
-  unsupported CPU name fails immediately. It is a no-op when `KERNEL_TUNE` is
+  compiler, the complete `KERNEL_TUNE` flag string, and the kernel's own
+  `-mgeneral-regs-only` constraint before any variant is configured, so an
+  unsupported combination fails immediately. It is a no-op when `KERNEL_TUNE` is
   unset.
 - `KERNEL_TUNE` is not exposed as a CI workflow input: it is a local tuning
   option, and the release package sets stay portable.
@@ -147,10 +170,14 @@ before building, which validates the toolchain early.
 - ThinLTO increases link time relative to a GCC build; enabling `KERNEL_LTO=none`
   with `KERNEL_TOOLCHAIN=clang` builds with clang and no LTO when link time or
   reproducibility matters more than size.
-- `KERNEL_TUNE` changes only scheduling, so it does not affect the package
-  manifest or artifact names; it is recorded in neither. A tuned kernel and a
-  portable kernel of the same inputs produce the same package filenames, so do
-  not mix them in one release without rebuilding.
+- `KERNEL_TUNE` is applied to the compiled objects only; it does not affect the
+  package manifest or artifact names, and it is recorded in neither. A tuned
+  kernel and a portable kernel of the same inputs produce the same package
+  filenames, so do not mix them in one release without rebuilding.
+- Selecting the SC8280XP profile changes the emitted ISA (`-march`), so its
+  tuning claim is a compilation setting only. This document does not assert that
+  the resulting kernel boots or is faster: those need an actual build and a boot
+  on the device and are outside what this checkout can verify.
 - A Clang ThinLTO kernel has not been built and booted end to end in this
   checkout: no arm64 kernel checkout, cross toolchain, or device is available
   here. The authoritative validation is the `gaokun3-package-debs` or

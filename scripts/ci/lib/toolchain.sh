@@ -25,15 +25,20 @@
 #   none                                          leave LTO disabled
 # It is rejected in GCC mode, where LTO_CLANG is unavailable.
 #
-# KERNEL_TUNE is an opt-in microarchitecture tuning mode for the Snapdragon
-# 8cx Gen 3 (SC8280XP). When set, the build appends KCFLAGS=-mtune=<cpu>. Only
-# -mtune (instruction scheduling) is used, never -march: -mtune keeps the
-# armv8-a ISA baseline and the kernel ABI, so externally built modules stay
-# compatible, while -march would let the compiler emit instructions the target
-# may not support on every cluster and break that ABI. KERNEL_TUNE accepts a
-# CPU name (for example cortex-x1 or cortex-a78) or the alias sc8280xp, which
-# selects the Cortex-X1 prime core. It is rejected when the compiler does not
-# accept the value.
+# KERNEL_TUNE is an opt-in target tuning mode for the Snapdragon 8cx Gen 3
+# (SC8280XP). The explicit profile aliases sc8280xp / 8cx-gen3 / 8cxgen3 select
+# both the ISA and the microarchitecture:
+#
+#   KCFLAGS=-march=armv8.4-a+crypto -mtune=cortex-x1c
+#
+# -march=armv8.4-a+crypto is the ISA the SC8280XP clusters implement (Armv8.4-A
+# with the crypto extension); -mtune=cortex-x1c is the microarchitecture the
+# compiler schedules for (the Cortex-X1C prime core). The two are independent:
+# -march chooses which instructions the compiler may emit, -mtune only affects
+# instruction scheduling and never changes the emitted ISA. Any other
+# KERNEL_TUNE value is treated as a bare CPU name and appends only
+# KCFLAGS=-mtune=<cpu>, so a custom tuning keeps the portable armv8-a baseline.
+# An unsupported value is rejected by the compiler probe below.
 #
 # Sourced by scripts/ci/20_build_kernel_variants.sh, the package scripts under
 # scripts/ci/, and scripts/local/build_kernel.sh. After resolve_kernel_toolchain,
@@ -46,14 +51,26 @@ KERNEL_TOOLCHAIN="${KERNEL_TOOLCHAIN:-gcc}"
 KERNEL_LTO="${KERNEL_LTO:-}"
 KERNEL_TUNE="${KERNEL_TUNE:-}"
 KERNEL_TUNE_CPU=""
+KERNEL_TUNE_FLAGS=""
 
-# Map KERNEL_TUNE to a compiler CPU name. Returns non-zero when unset so callers
-# can distinguish "no tuning" from an explicit value.
+# Map KERNEL_TUNE to a compiler CPU name (the -mtune value). Returns non-zero
+# when unset so callers can distinguish "no tuning" from an explicit value.
 kernel_tune_cpu() {
   case "${KERNEL_TUNE:-}" in
     "") return 1 ;;
-    sc8280xp|8cx-gen3|8cxgen3) printf 'cortex-x1\n' ;;
+    sc8280xp|8cx-gen3|8cxgen3) printf 'cortex-x1c\n' ;;
     *) printf '%s\n' "$KERNEL_TUNE" ;;
+  esac
+}
+
+# Map KERNEL_TUNE to the full compiler flag string appended as KCFLAGS. The
+# explicit SC8280XP profile selects both the ISA and the microarchitecture; any
+# other value tunes scheduling only. Returns non-zero when unset.
+kernel_tune_flags() {
+  case "${KERNEL_TUNE:-}" in
+    "") return 1 ;;
+    sc8280xp|8cx-gen3|8cxgen3) printf '%s\n' '-march=armv8.4-a+crypto -mtune=cortex-x1c' ;;
+    *) printf '%s\n' "-mtune=${KERNEL_TUNE}" ;;
   esac
 }
 
@@ -93,40 +110,56 @@ resolve_kernel_toolchain() {
       echo "unknown KERNEL_TUNE '${KERNEL_TUNE}'" >&2
       return 1
     fi
-    KERNEL_MAKE_ARGS+=("KCFLAGS=-mtune=${KERNEL_TUNE_CPU}")
+    KERNEL_TUNE_FLAGS="$(kernel_tune_flags)"
+    # Preserve any KCFLAGS the caller exported. A KCFLAGS= on the make command
+    # line overrides the environment, so without this the caller's flags would
+    # be silently dropped whenever KERNEL_TUNE is set.
+    local extra_kcflags="${KCFLAGS:-}"
+    if [[ -n "$extra_kcflags" ]]; then
+      KERNEL_MAKE_ARGS+=("KCFLAGS=${KERNEL_TUNE_FLAGS} ${extra_kcflags}")
+    else
+      KERNEL_MAKE_ARGS+=("KCFLAGS=${KERNEL_TUNE_FLAGS}")
+    fi
   else
     KERNEL_TUNE_CPU=""
+    KERNEL_TUNE_FLAGS=""
   fi
 
-  export KERNEL_TOOLCHAIN KERNEL_LTO KERNEL_TUNE KERNEL_TUNE_CPU
+  export KERNEL_TOOLCHAIN KERNEL_LTO KERNEL_TUNE KERNEL_TUNE_CPU KERNEL_TUNE_FLAGS
 }
 
 # Compile a trivial translation unit with the caller's compiler to prove it
-# accepts -mtune=<cpu> before the kernel build starts. The caller passes the
-# compiler and any target flags, e.g.:
+# accepts the complete KERNEL_TUNE flag string before the kernel build starts.
+# The probe mirrors the kernel's own constraint (-mgeneral-regs-only, which
+# arm64 kernel C code is compiled with), so it exercises the exact ISA + tuning
+# combination the build will use. The caller passes the compiler and any target
+# flags, e.g.:
 #   validate_kernel_tune clang --target=aarch64-linux-gnu
 #   validate_kernel_tune "${CROSS_COMPILE}gcc"
 # A no-op when KERNEL_TUNE is unset, so portable builds are unaffected.
 validate_kernel_tune() {
   [[ -n "${KERNEL_TUNE:-}" ]] || return 0
 
-  local cpu="$KERNEL_TUNE_CPU"
-  if [[ -z "$cpu" ]]; then
-    cpu="$(kernel_tune_cpu)" || return 0
+  local flags="$KERNEL_TUNE_FLAGS"
+  if [[ -z "$flags" ]]; then
+    flags="$(kernel_tune_flags)" || return 0
   fi
+
+  local -a flag_args
+  read -r -a flag_args <<<"$flags"
 
   local tmp
   tmp="$(mktemp -d)"
   printf 'int gaokun3_tune_probe(void){return 0;}\n' >"$tmp/probe.c"
-  if ! "$@" -mtune="$cpu" -x c -c -o "$tmp/probe.o" "$tmp/probe.c" 2>"$tmp/err"; then
-    echo "ERROR: the compiler rejected -mtune=$cpu (KERNEL_TUNE=$KERNEL_TUNE):" >&2
+  if ! "$@" "${flag_args[@]}" -mgeneral-regs-only -x c -c -o "$tmp/probe.o" "$tmp/probe.c" 2>"$tmp/err"; then
+    echo "ERROR: the compiler rejected '${flags}' (KERNEL_TUNE=$KERNEL_TUNE):" >&2
     sed 's/^/  /' "$tmp/err" >&2
-    echo "Set KERNEL_TUNE to a supported CPU, or unset it for a portable build." >&2
+    echo "Set KERNEL_TUNE to a supported CPU or profile, or unset it for a portable build." >&2
     rm -rf "$tmp"
     return 1
   fi
   rm -rf "$tmp"
-  echo "kernel tune: -mtune=$cpu accepted by the compiler"
+  echo "kernel tune: '${flags}' accepted by the compiler"
 }
 
 # True when the variant's generated .config exposes the ThinLTO choice symbol,
