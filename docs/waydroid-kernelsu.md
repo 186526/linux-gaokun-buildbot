@@ -4,7 +4,7 @@
 
 ## 环境
 
-目标机为 `real186@192.168.2.231`，已确认运行环境如下：
+目标机为 `real186@192.168.2.231`。以下为最初排查 seccomp 问题时的运行环境快照：
 
 ```text
 Kernel:       7.2.9-gaokun3-el2-xanmod1
@@ -12,6 +12,8 @@ Architecture: aarch64
 Waydroid:     Android 16 / SDK 36
 Manager:      me.weishu.kernelsu v3.3.0
 ```
+
+> 快照时间说明：上面的 `Kernel` 行是 2026-10-07 排查时的运行内核。2026-10-08 的只读复核（见“远端只读验证（2026-10-08）”）显示，目标机当前实际运行的是标准内核 `7.2.9-gaokun3-xanmod1` 的旧构建。标准与 EL2 变体共用同一 `gaokun3_defconfig`，因此本节的 KernelSU 配置项与 `/proc/kallsyms` 符号结论对两者同样成立。
 
 当前内核已经内建 KernelSU：
 
@@ -230,9 +232,11 @@ sudo lxc-attach -P /var/lib/waydroid/lxc -n waydroid -u "$appid" -- \
 验证内核仍然包含 KernelSU：
 
 ```bash
-grep CONFIG_KSU /boot/config-$(uname -r)
+zcat /proc/config.gz | grep CONFIG_KSU      # 运行内核内嵌配置
 grep -E 'ksu_supercall|ksu_seccomp|kernelsu_init' /proc/kallsyms
 ```
+
+`/proc/config.gz` 反映的是运行内核自身的配置；若只需确认磁盘上安装的配置，也可用 `grep CONFIG_KSU /boot/config-$(uname -r)`，但 `/boot/config-*` 可能已被更新的构建覆盖，不代表当前运行内核。
 
 本次修复使用的备份后缀为：
 
@@ -266,12 +270,14 @@ CONFIG_TRACEPOINTS=y
 
 ### 关键证据
 
-标准内核 `7.2.9-gaokun3-xanmod1` 的 `/boot/config-*` 只有 `CONFIG_KALLSYMS=y`，没有 `CONFIG_KALLSYMS_ALL`：
+当时运行的标准内核 `7.2.9-gaokun3-xanmod1` 内嵌配置（`/proc/config.gz`，即运行内核自身携带的配置）只有 `CONFIG_KALLSYMS=y`，没有 `CONFIG_KALLSYMS_ALL`：
 
 ```text
 CONFIG_KALLSYMS=y
 # CONFIG_KALLSYMS_ALL is not set
 ```
+
+需要区分两处配置来源：运行内核的配置是 `/proc/config.gz`；磁盘上的 `/boot/config-*` 会在重新构建安装后被覆盖，因此 `/boot/config-*` 不能代表运行内核。2026-10-08 的复核中 `/boot/config-7.2.9-gaokun3-xanmod1` 已含 `CONFIG_KALLSYMS_ALL=y`，而运行内核内嵌的 `/proc/config.gz` 仍为 `# CONFIG_KALLSYMS_ALL is not set`，两者不一致正说明运行内核是旧构建，详见“远端只读验证（2026-10-08）”。
 
 因此 `/proc/kallsyms` 中检索不到数据段符号，`sys_call_table` 和 `jiffies` 均出现 0 次：
 
@@ -350,7 +356,70 @@ CONFIG_KALLSYMS_ALL=y
 
 把 `CONFIG_KSU_DEBUG=y` 当作根因修复会掩盖真正的符号可见性问题。根因修复是启用 `CONFIG_KALLSYMS_ALL=y`；`CONFIG_KSU_DEBUG=y` 仅在需要手动指定管理器 appid 时作为调试手段保留。
 
-本节的“关键证据”来自标准内核 `7.2.9-gaokun3-xanmod1` 现有的 `/boot/config-*`、`/proc/kallsyms` 与启动日志，以及 KernelSU pin 版源码；仓库侧改动仅完成静态验证，尚未在目标机上重新构建并启动带 `CONFIG_KALLSYMS_ALL=y` 的内核，因此不声明该修复已在目标机实测生效。
+本节的“关键证据”来自标准内核 `7.2.9-gaokun3-xanmod1` 运行时的内嵌配置 `/proc/config.gz`、`/proc/kallsyms` 与启动日志，以及 KernelSU pin 版源码。截至本次只读验证，带 `CONFIG_KALLSYMS_ALL=y` 的修复内核已在目标机上构建并曾短暂启动一次，实测 `sys_call_table` 解析成功且 dispatcher 安装成功，但该次启动未运行 Waydroid，自动加冕尚未实测；详见下一节“远端只读验证（2026-10-08）”。
+
+## 远端只读验证（2026-10-08）
+
+本次在目标机 `real186@192.168.2.231` 上以只读方式核对 KernelSU/Waydroid 状态，未切换内核、未重启、未修改远端任何文件。所有结论均来自 `uname`、`/proc/config.gz`、`/proc/kallsyms`、`journalctl`、`/boot` 与 Waydroid 配置文件。
+
+### 运行内核仍是旧构建
+
+`uname -r` 为 `7.2.9-gaokun3-xanmod1`，但 `/proc/version` 显示构建者为 `real186@net186-laptop2.sunoaki.net`、时间为 `Wed Oct 7 04:00:42 CST 2026`。该时间早于打开 `CONFIG_KALLSYMS_ALL` 的修复提交，因此当前运行内核仍缺少该配置。运行内核内嵌配置（`/proc/config.gz`）为：
+
+```text
+CONFIG_KALLSYMS=y
+# CONFIG_KALLSYMS_ALL is not set
+CONFIG_KSU=y
+# CONFIG_KSU_DEBUG is not set
+```
+
+启动日志与配置一致，syscall 表仍未解析：
+
+```text
+KernelSU: sys_call_table=0x0
+```
+
+本次启动日志中没有 `dispatcher installed at slot`、没有 `on_post_fs_data!`、没有 `Searching manager` / `Crowning manager` / `Found new base.apk`。`/sys/module/kernelsu/parameters/` 不存在，无法读取或写入 `ksu_debug_manager_appid`。`/proc/kallsyms` 中 `sys_call_table` 与 `jiffies` 命中数均为 0（数据段符号不可见），`kernelsu_init`、`ksu_supercall_*`、`ksu_seccomp_*` 等 text 符号存在。
+
+结论：**当前运行内核上自动加冕与手动指定 appid 两条路径都不可用，KernelSU Manager 仍不会被识别。** 这与本文前面记录的根因结论一致，未出现新的失败模式。
+
+### 磁盘上的新内核已包含修复
+
+`/boot/config-7.2.9-gaokun3-xanmod1` 与 `/boot/config-7.2.9-gaokun3-el2-xanmod1`（均为 2026-10-08 07:55/07:59 生成）已包含：
+
+```text
+CONFIG_KALLSYMS_ALL=y
+CONFIG_KSU=y
+CONFIG_KSU_DEBUG=y
+```
+
+即 `CONFIG_KALLSYMS_ALL=y` 修复已进入构建产物，只是尚未成为运行内核。运行内核来自 `/boot/efi/loader/entries/8077114821394d74b1f4278d58fb1e5c-7.2.9-gaokun3-xanmod1.conf`（`loader.conf` 的 `default`），其 EFI 内核构建于 2026-10-07 04:00；磁盘上另有 2026-10-08 生成的 `debian-7.2.9-gaokun3-*.conf` 指向 CI 构建的新内核，尚未被默认选中。
+
+### 修复内核曾被短暂启动，自动加冕尚未实测
+
+journal 的 boot `-2`（2026-10-08 09:56:36）使用 CI 构建的内核（`/proc/version` 构建者 `runner@runnervmy3dvn`，Ubuntu gcc 13.3.0）。该次启动的 KernelSU 日志显示符号解析与 dispatcher 安装成功：
+
+```text
+KernelSU: sys_call_table=0xffffb27c0e8f0d00
+KernelSU: patch syscall 18, 0xffffb27c0dad1fb8 -> 0xffffb27c0e680330
+KernelSU: dispatcher installed at slot 18
+```
+
+这实测打通了本文预测的因果链第一环：`CONFIG_KALLSYMS_ALL=y` 使 `sys_call_table` 解析成功，syscall 表槽位 hook（dispatcher）已安装。
+
+但该次启动仅持续约两分钟（墙钟 09:56:36–09:58:39；末条日志单调时间戳约 128 秒），期间 Waydroid 容器处于 `STOPPED`，没有 zygote/`on_post_fs_data` 触发，因此日志中没有 `on_post_fs_data!` / `Searching manager` / `Crowning manager`。**“自动加冕是否恢复”在修复内核上尚未实测。**
+
+### Waydroid 侧状态
+
+- `waydroid status`：`Session: STOPPED`，`Vendor type: MAINLINE`；`waydroid-container.service` 为 `active`，但容器 `lxc-info` 为 `STOPPED`。
+- 两份 seccomp 文件（`/var/lib/waydroid/lxc/waydroid/waydroid.seccomp` 与 `/usr/lib/waydroid/data/configs/waydroid.seccomp`，均为 339 字节、时间 2026-10-07 13:04）已不含单独的 `reboot` 行，说明本文记录的 LXC seccomp 修复仍在生效。
+- 容器未运行，无法读取 `/data/system/packages.list`，因此本次无法读取 Manager appid，也无法用 `libksud debug info` / `debug su` 复核 `flags` 与 root。
+
+### 结论与未决阻塞
+
+- **已证据支撑**：修复内核（CI 构建）能让 `sys_call_table` 解析并安装 dispatcher；seccomp `reboot` 修复仍在生效；磁盘上标准与 EL2 内核均已带 `CONFIG_KALLSYMS_ALL=y` 与 `CONFIG_KSU_DEBUG=y`。
+- **仍阻塞**：运行内核是旧构建，尚未切到修复内核；修复内核上一次启动未运行 Waydroid，自动加冕链路（`on_post_fs_data` → `Crowning manager`）与 Manager 识别尚未实测。
+- **下一步（需操作者执行，非本次只读范围）**：切到修复内核并保持 Waydroid 会话运行，再复核 `dispatcher installed at slot`、`on_post_fs_data!`、`Crowning manager`、`ksu_debug_manager_appid` 与 `libksud debug info/su`。
 
 ## 回滚
 

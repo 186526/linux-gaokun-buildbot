@@ -91,3 +91,30 @@ sudo journalctl -b -k -o short-monotonic > gaokun-display-boot.log
 从备用内核启动后，若上次故障启动日志已持久保存，改用 `journalctl -b -1 -k -o short-monotonic`。`uname -a` 的版本后缀不能区分所有候选，还需记录下载的 Actions run / package-manifest.json 中的内核 SHA，并与 `build.env` 的 `KERNEL_COMMIT` 对照。
 
 最少需要：故障内核来源、最后正常的内核版本、花屏照片或视频、以上日志，以及禁用触摸/关闭 DSC 两次独立测试结果。得到结果后选择一个已有补丁测试，并保留原候选供回退；在此之前不宣称已修复。
+
+## 远端只读核对：CI 内核与本地内核的 DSI 命令通路差异（2026-10-08）
+
+在目标机 `real186@192.168.2.231` 上以只读方式（未切换内核、未重启）按内核构建者字符串关联 journal 中的历史启动，发现显示错误与构建来源强相关：
+
+- **本地 Debian 工具链内核**（`real186@net186-laptop2.sunoaki.net`，构建于 2026-10-07 04:00:42 CST）：多次启动中 0 次 `wait for video done timed out`、0 次 `cmd dma tx failed`。
+- **CI 构建内核**（`runner@runnervmy3dvn` 等，Ubuntu gcc 13.3.0）：多次启动均出现 1 次 `wait for video done timed out` 与 5–6 次 `cmd dma tx failed`。
+
+在 boot `-2`（2026-10-08 09:56:36，CI 内核）上的原始报文为：
+
+```text
+msm_dsi ae96000.dsi: [drm:dsi_cmds2buf_tx [msm]] *ERROR* wait for video done timed out
+dsi_cmds2buf_tx: cmd dma tx failed, type=0x39, data0=0x51, len=8, ret=-110
+```
+
+`type=0x39` 为 DCS 长写，`data0=0x51` 为 `MIPI_DCS_SET_DISPLAY_BRIGHTNESS`，`ret=-110` 即 `-ETIMEDOUT`：发往第二个 DSI 控制器（`ae96000`）的背光 DCS 命令未完成。同一 boot 中 a660 固件已正确加载：
+
+```text
+msm_dpu ae01000.display-controller: [drm:adreno_request_fw [msm]] loaded qcom/a660_sqe.fw from new location
+msm_dpu ae01000.display-controller: [drm:adreno_request_fw [msm]] loaded qcom/a660_gmu.bin from new location
+```
+
+即 M32 的 a660 固件路径修复在两类内核上均生效，可排除它是该 DSI 命令通路差异的原因。
+
+两类内核的运行配置除 `CONFIG_CC_VERSION_TEXT`、`CONFIG_GCC_VERSION`、`CONFIG_KALLSYMS_ALL`、`CONFIG_KSU_DEBUG` 外一致，因此差异来自所应用的源码补丁与/或工具链。`Failed to create device link ... ae96000.dsi` 在干净的本地启动中同样出现，不是预测性指标。
+
+区分内核来源可用 `uname -v` 或 `/proc/version` 中的构建者字符串：本地内核为 `real186@net186-laptop2.sunoaki.net`，CI 内核为 `runner@<runner-name>`。需要定位根因时，按“移除单一候选补丁后重建 CI 内核并统计 `wait for video done timed out` 次数”的方式做 A/B 对照；不要用 `module_blacklist=himax_hx83121a_spi` 作为判据（那是面板驱动，不是 DSI 命令通路）。本节仅记录证据关联，不宣称已定位根因或已修复。
