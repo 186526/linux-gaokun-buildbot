@@ -1123,10 +1123,10 @@ index f3c00be67081..d679b92b72b4 100644
 +#include "sc8280xp-huawei-gaokun3-camera.dtsi"
 diff --git a/arch/arm64/configs/gaokun3_defconfig b/arch/arm64/configs/gaokun3_defconfig
 new file mode 100644
-index 000000000000..22138763cf8d
+index 000000000000..f5fee310c34f
 --- /dev/null
 +++ b/arch/arm64/configs/gaokun3_defconfig
-@@ -0,0 +1,496 @@
+@@ -0,0 +1,504 @@
 +CONFIG_LOCALVERSION="-gaokun3"
 +# CONFIG_LOCALVERSION_AUTO is not set
 +CONFIG_SYSVIPC=y
@@ -1283,10 +1283,18 @@ index 000000000000..22138763cf8d
 +CONFIG_BRIDGE_VLAN_FILTERING=y
 +CONFIG_VLAN_8021Q=m
 +CONFIG_NET_SCHED=y
++CONFIG_NET_SCH_FQ=m
++CONFIG_NET_SCH_FQ_CODEL=m
++CONFIG_NET_SCH_CAKE=m
++CONFIG_NET_SCH_DEFAULT=y
++CONFIG_DEFAULT_FQ=y
 +CONFIG_NET_CLS_CGROUP=m
 +CONFIG_QRTR_SMD=m
 +CONFIG_QRTR_TUN=m
 +CONFIG_CGROUP_NET_PRIO=y
++CONFIG_TCP_CONG_ADVANCED=y
++CONFIG_TCP_CONG_BBR=y
++CONFIG_DEFAULT_BBR=y
 +CONFIG_BT=m
 +CONFIG_BT_RFCOMM=m
 +CONFIG_BT_HIDP=m
