@@ -1,6 +1,6 @@
 # Waydroid KernelSU 修复记录
 
-本文记录 Gaokun3 Linux 上 Waydroid 使用 KernelSU Manager 时，`libksud.so` 被 seccomp 终止的问题及修复方法。
+本文记录 Gaokun3 Linux 上 Waydroid 配合 KernelSU Manager 的两个独立故障及修复方法：`libksud.so` 被 seccomp 终止，以及新内核上 `init second_stage` 之后因 `ksu_dup_sepolicy()` 空指针解引用而卡死。
 
 ## 环境
 
@@ -420,6 +420,96 @@ KernelSU: dispatcher installed at slot 18
 - **已证据支撑**：修复内核（CI 构建）能让 `sys_call_table` 解析并安装 dispatcher；seccomp `reboot` 修复仍在生效；磁盘上标准与 EL2 内核均已带 `CONFIG_KALLSYMS_ALL=y` 与 `CONFIG_KSU_DEBUG=y`。
 - **仍阻塞**：运行内核是旧构建，尚未切到修复内核；修复内核上一次启动未运行 Waydroid，自动加冕链路（`on_post_fs_data` → `Crowning manager`）与 Manager 识别尚未实测。
 - **下一步（需操作者执行，非本次只读范围）**：切到修复内核并保持 Waydroid 会话运行，再复核 `dispatcher installed at slot`、`on_post_fs_data!`、`Crowning manager`、`ksu_debug_manager_appid` 与 `libksud debug info/su`。
+
+## 新内核卡死根因：无 SELinux 策略时 ksu_dup_sepolicy() 空指针
+
+2026-10-08 在已切到新内核的目标机上复现并定位了 `/system/bin/init second_stage` 之后的卡死。这不是 Waydroid 或 seccomp 问题，而是 KernelSU 在“未加载 SELinux 策略”时对 `selinux_state.policy` 空指针解引用导致的内核 oops。
+
+### 运行环境
+
+目标机当前运行 CI 构建的 `7.2.9-gaokun3-el2-xanmod1`：
+
+```text
+Linux version 7.2.9-gaokun3-el2-xanmod1 (runner@runnervmy3dvn) #1 SMP PREEMPT Thu Oct  8 03:20:44 UTC 2026
+```
+
+该内核内嵌配置（`/proc/config.gz`）已含 `CONFIG_KALLSYMS_ALL=y`、`CONFIG_KSU=y`、`CONFIG_KSU_DEBUG=y`、`CONFIG_SECURITY_SELINUX=y`、`CONFIG_SECURITY_SELINUX_DEVELOP=y`，且 `/sys/module/kernelsu/parameters/ksu_debug_manager_appid` 存在。因此“自动加冕缺 `CONFIG_KALLSYMS_ALL`”与“seccomp 拦截 `reboot`”都不是本次卡死的原因。
+
+关键点：该 Debian 镜像**没有加载 SELinux 策略**。`/sys/fs/selinux` 不存在，`/sys/kernel/security/lsm` 为 `capability,landlock,apparmor`，`/etc/selinux/config` 未启用。因此 `selinux_state.policy` 在 Android `init` 执行 `second_stage` 时仍为 NULL。
+
+### 崩溃证据
+
+`sudo dmesg` 中 `init`（PID 6018）执行 `second_stage` 时立即触发空指针：
+
+```text
+KernelSU: /system/bin/init second_stage executed
+KernelSU: initialize_fake_status: status_page not exist
+KernelSU: selinux_hide: fake status need late initialization
+KernelSU: SELinux permissive or disabled, apply rules!
+Unable to handle kernel NULL pointer dereference at virtual address 0000000000000250
+...
+pc : ksu_dup_sepolicy+0x20/0x14c
+lr : apply_kernelsu_rules+0x44/0x6e8
+Call trace:
+ ksu_dup_sepolicy+0x20/0x14c (P)
+ apply_kernelsu_rules+0x44/0x6e8
+ ksu_handle_execveat_ksud+0x1d0/0x1e8
+ ksu_execve_hook_ksud_common+0x58/0x94
+ ksu_execve_hook_ksud+0x14/0x20
+ ksu_hook_execve_common+0x248/0x2a8
+ ksu_hook_execve+0x14/0x20
+ ksu_syscall_dispatcher+0x58/0x6c
+```
+
+寄存器 `x0 = 0`（NULL），故障地址 `0x250` 正是 `struct policydb` 中 `len` 字段的偏移。`apply_kernelsu_rules()` 读取 `old_pol = selinux_state.policy` 后直接调用 `ksu_dup_sepolicy(old_pol)`，后者在第一行读取 `old_pol->policydb.len`。崩溃后 `init` 无法继续，`servicemanager`/`zygote` 不出现，Waydroid 卡在启动阶段。
+
+`kernelsu.norc=1` 无效，因为 `norc` 只控制自定义 `modules.rc` 脚本（`module_param_named(norc, ksu_no_custom_rc, bool, 0)`），与这条 SELinux 路径无关。
+
+### 修复：KernelSU 源码变换（仓库内补丁）
+
+修复以 pinned KernelSU 的源码补丁形式随仓库发布，由 `scripts/ci/lib/kernelsu.sh` 在克隆后、接入内核前应用：
+
+```text
+patches/kernelsu/0001-selinux-skip-policy-rewrite-without-loaded-policy.patch
+```
+
+补丁对 `kernel/selinux/rules.c` 做两处最小改动：
+
+- `apply_kernelsu_rules()`：在 `mutex_lock(&selinux_state.policy_mutex)` 之后读取 `old_pol`，当 `old_pol` 为 NULL 时打印 `KernelSU: no SELinux policy loaded, skipping SELinux rules` 并直接 `goto out_unlock`，跳过策略复制与规则注入。
+- `handle_sepolicy()`：同样的 NULL 检查，未加载策略时返回 `-EINVAL`，避免晚到的用户态策略请求再次解引用空指针。
+
+该守卫只跳过 SELinux 规则应用；syscall dispatcher、`CONFIG_KSU`、`CONFIG_KALLSYMS_ALL`、`on_post_fs_data` 与管理器自动加冕路径保持不变。已加载策略时 `old_pol` 非 NULL，原有复制与规则应用行为完全不变。补丁不含任何函数名以外的标识符改动，因此对标准 Android（有策略）行为零影响。
+
+### 集成与静态验证
+
+`scripts/ci/lib/kernelsu.sh` 的改动：
+
+- 新增 `KERNSU_PATCH_DIR`，默认按脚本自身位置解析到仓库的 `patches/kernelsu/`；
+- `apply_kernelsu_source_patches()` 对目录内每个 `*.patch` 执行 `git -C "$clone_dir" apply`，失败即中止构建；
+- `assert_kernelsu_source_guard()` 断言变换后的 `rules.c` 含守卫日志，防止“补丁能打但守卫丢失”；
+- `integrate_kernelsu()` 在接入 `drivers/kernelsu` 前调用上述两步。
+
+已执行的静态验证（不含完整内核构建）：
+
+```bash
+bash -n scripts/ci/lib/kernelsu.sh
+# 对 pinned commit 932014ab 的克隆应用补丁并断言守卫
+git -C <pin-clone> apply --check patches/kernelsu/0001-selinux-skip-policy-rewrite-without-loaded-policy.patch
+# 逆向校验：对变换后的树 --reverse --check 通过，证明补丁即精确 diff
+# 以最小桩头文件对 apply_kernelsu_rules()/handle_sepolicy() 做 gcc -fsyntax-only，均通过
+```
+
+### 预期运行时行为与验收
+
+修复内核启动后，`init second_stage` 处应出现：
+
+```text
+KernelSU: no SELinux policy loaded, skipping SELinux rules
+```
+
+并且不再出现 `Unable to handle kernel NULL pointer dereference` 与 `ksu_dup_sepolicy` 调用栈。随后 `servicemanager`/`zygote` 应正常出现，Waydroid 会话可启动。管理器自动加冕仍需在 Waydroid 运行时复核 `on_post_fs_data!` / `Crowning manager` / `ksu_debug_manager_appid`，参见前文“自动加冕失效的根因：缺少 CONFIG_KALLSYMS_ALL”。
+
+本节的源码变换为仓库侧改动，已在 pinned 源码上做静态验证，但尚未在目标机上以修复内核实测；运行时验收需在修复内核上确认上述日志。
 
 ## 回滚
 

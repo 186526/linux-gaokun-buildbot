@@ -1,0 +1,82 @@
+From: gaokun3 buildbot <buildbot@gaokun3.invalid>
+Date: Wed, 8 Oct 2026 00:00:00 +0000
+Subject: [PATCH] selinux: skip policy rewrite when no SELinux policy is loaded
+
+KernelSU applies its SELinux rules from the execve hook when Android's
+init runs `second_stage`, which happens before a policy is necessarily
+loaded. On a host that boots without an SELinux policy (no
+/sys/fs/selinux, active LSMs capability/landlock/apparmor, as in the
+Debian Waydroid image) selinux_state.policy is still NULL at that point.
+
+apply_kernelsu_rules() reads old_pol = selinux_state.policy and passes it
+to ksu_dup_sepolicy(), which dereferences old_pol->policydb.len with no
+NULL check. That faults at init's second_stage and takes init and zygote
+down, so Waydroid never reaches servicemanager/zygote.
+
+Skip only the SELinux rule application when there is no policy to
+duplicate. The rest of the execve hook path (ksud integration,
+on_post_fs_data, manager auto-crown) is left untouched, and
+handle_sepolicy() gets the same guard so a late userspace policy request
+is rejected instead of dereferencing the NULL policy.
+
+This changes nothing when a policy is loaded: old_pol is non-NULL and the
+original duplication and rule application run unchanged.
+---
+ kernel/selinux/rules.c | 30 +++++++++++++++++++++++++-----
+ 1 file changed, 25 insertions(+), 5 deletions(-)
+
+diff --git a/kernel/selinux/rules.c b/kernel/selinux/rules.c
+index 762a7c5..6e93269 100644
+--- a/kernel/selinux/rules.c
++++ b/kernel/selinux/rules.c
+@@ -44,7 +44,7 @@ static void reset_avc_cache()
+ 
+ void apply_kernelsu_rules()
+ {
+-    struct selinux_policy *pol, *old_pol = selinux_state.policy;
++    struct selinux_policy *pol, *old_pol;
+     struct policydb *db;
+ 
+     if (!getenforce()) {
+@@ -52,8 +52,23 @@ void apply_kernelsu_rules()
+     }
+ 
+     mutex_lock(&selinux_state.policy_mutex);
+-    backup_sepolicy =
+-        ksu_dup_sepolicy(rcu_dereference_protected(old_pol, lockdep_is_held(&selinux_state.policy_mutex)));
++
++    old_pol = rcu_dereference_protected(selinux_state.policy, lockdep_is_held(&selinux_state.policy_mutex));
++    /*
++     * Some environments reach init's second_stage without an SELinux policy
++     * loaded (for example Waydroid on a host that boots without one), so
++     * selinux_state.policy is still NULL. ksu_dup_sepolicy() would
++     * dereference it and oops the kernel, taking init and zygote down. There
++     * is nothing to duplicate or augment without a policy, so skip only the
++     * SELinux rule application; the rest of the execve hook path (ksud
++     * integration, on_post_fs_data, manager auto-crown) runs unchanged.
++     */
++    if (unlikely(!old_pol)) {
++        pr_info("KernelSU: no SELinux policy loaded, skipping SELinux rules\n");
++        goto out_unlock;
++    }
++
++    backup_sepolicy = ksu_dup_sepolicy(old_pol);
+     if (IS_ERR(backup_sepolicy)) {
+         pr_err("failed to create backup sepolicy: %ld\n", PTR_ERR(backup_sepolicy));
+         backup_sepolicy = NULL;
+@@ -463,8 +478,13 @@ int handle_sepolicy(void __user *user_data, u64 data_len)
+ 
+     mutex_lock(&selinux_state.policy_mutex);
+ 
+-    old_pol = selinux_state.policy;
+-    pol = ksu_dup_sepolicy(rcu_dereference_protected(old_pol, lockdep_is_held(&selinux_state.policy_mutex)));
++    old_pol = rcu_dereference_protected(selinux_state.policy, lockdep_is_held(&selinux_state.policy_mutex));
++    if (unlikely(!old_pol)) {
++        pr_info("KernelSU: no SELinux policy loaded, rejecting sepolicy update\n");
++        ret = -EINVAL;
++        goto out_unlock;
++    }
++    pol = ksu_dup_sepolicy(old_pol);
+     if (IS_ERR(pol)) {
+         ret = PTR_ERR(pol);
+         pr_err("ksu_dup_sepolicy err: %d\n", ret);

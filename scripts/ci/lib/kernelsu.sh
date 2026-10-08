@@ -11,6 +11,12 @@ KERNSU_REF="${KERNSU_REF:-v3.3.0}"
 KERNSU_COMMIT="${KERNSU_COMMIT:-932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e}"
 KERNSU_SRC="${KERNSU_SRC:-}"
 
+# Repository-carried source transformations for the pinned KernelSU checkout.
+# Defaults to patches/kernelsu/ at the repository root, resolved from this
+# file's location so a sourced integration does not depend on the caller's
+# working directory.
+KERNSU_PATCH_DIR="${KERNSU_PATCH_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/patches/kernelsu}"
+
 KERNSU_MAKEFILE_LINE='obj-$(CONFIG_KSU) += kernelsu/'
 KERNSU_KCONFIG_LINE='source "drivers/kernelsu/Kconfig"'
 
@@ -51,6 +57,50 @@ fetch_kernelsu() {
   fi
 
   echo "$clone_dir"
+}
+
+# Apply the repository-carried source transformations to the pinned checkout.
+# Each *.patch under KERNSU_PATCH_DIR is applied with `git apply`, which is
+# strict about context and fails the build if a patch no longer matches the
+# pinned revision. This is how the SELinux no-policy guard reaches the built
+# kernel without vendoring KernelSU; see patches/kernelsu/PINNED_REVISION.md.
+apply_kernelsu_source_patches() {
+  local clone_dir="$1"
+  local patch_dir="${KERNSU_PATCH_DIR:-}"
+  local patch_file
+
+  if [[ -z "$patch_dir" || ! -d "$patch_dir" ]]; then
+    echo "KernelSU patch directory not found: ${patch_dir:-<unset>}" >&2
+    return 1
+  fi
+
+  shopt -s nullglob
+  for patch_file in "$patch_dir"/*.patch; do
+    if ! git -C "$clone_dir" apply --whitespace=nowarn "$patch_file"; then
+      echo "failed to apply KernelSU source patch $(basename "$patch_file")" >&2
+      shopt -u nullglob
+      return 1
+    fi
+  done
+  shopt -u nullglob
+}
+
+# Fail the build if the transformed source no longer carries the SELinux
+# no-policy guard. The patch apply above already fails on a mismatched hunk;
+# this pins the guard to the transformed tree so a patch that applies but no
+# longer protects the NULL-policy path cannot ship silently.
+assert_kernelsu_source_guard() {
+  local clone_dir="$1"
+  local rules="$clone_dir/kernel/selinux/rules.c"
+
+  if [[ ! -f "$rules" ]]; then
+    echo "missing $rules, cannot verify the KernelSU SELinux guard" >&2
+    return 1
+  fi
+  if ! grep -q 'no SELinux policy loaded, skipping SELinux rules' "$rules"; then
+    echo "KernelSU SELinux no-policy guard is not present in $rules" >&2
+    return 1
+  fi
 }
 
 # True when $2 is a line of the file $1, compared with whitespace stripped.
@@ -138,6 +188,11 @@ integrate_kernelsu() {
 
   clone_dir="$(fetch_kernelsu)" || return 1
   kernel_su_commit="$(git -C "$clone_dir" rev-parse --short=12 HEAD)" || return 1
+
+  # The source transformations must land before the driver is wired in and the
+  # kernel is configured, so a failed apply stops the build here.
+  apply_kernelsu_source_patches "$clone_dir" || return 1
+  assert_kernelsu_source_guard "$clone_dir" || return 1
 
   wire_kernelsu_driver_symlink "$src_dir" "$clone_dir" || return 1
   wire_kernelsu_kbuild "$src_dir" || return 1
