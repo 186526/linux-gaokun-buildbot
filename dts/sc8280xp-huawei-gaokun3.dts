@@ -1666,6 +1666,15 @@
 	};
 
 	ts0_default: ts0-default-state {
+		/* Select SPI before the touchscreen driver releases reset. */
+		mode-select-pins {
+			pins = "gpio174";
+			function = "gpio";
+			drive-strength = <16>;
+			bias-pull-up;
+			output-low;
+		};
+
 		int-n-pins {
 			pins = "gpio175";
 			function = "gpio";
