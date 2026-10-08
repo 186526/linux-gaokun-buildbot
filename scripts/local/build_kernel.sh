@@ -10,6 +10,13 @@ KERN_OUT_EL2="${KERN_OUT_EL2:-$HOME/gaokun/kernel-out-el2}"
 # KernelSU is opt-in. Empty means "ask interactively"; the prompt defaults to
 # yes (a local UX default, separate from the CI default of false).
 BUILD_KERNELSU="${BUILD_KERNELSU:-}"
+# Toolchain selection, identical to the CI pipeline: gcc (default, unchanged) or
+# clang for Clang/LLVM with ThinLTO. KERNEL_LTO defaults to thin in clang mode.
+KERNEL_TOOLCHAIN="${KERNEL_TOOLCHAIN:-gcc}"
+KERNEL_LTO="${KERNEL_LTO:-}"
+# Opt-in microarchitecture tuning (for example KERNEL_TUNE=sc8280xp); unset keeps
+# the portable armv8-a baseline.
+KERNEL_TUNE="${KERNEL_TUNE:-}"
 # Non-interactive overrides. Leave any of these unset to be prompted for it.
 INSTALL_DEPS="${INSTALL_DEPS:-}"
 PULL_KERNEL="${PULL_KERNEL:-}"
@@ -120,8 +127,14 @@ if [[ "$install_deps" == "yes" ]]; then
     if [[ "$DISTRO" == "ubuntu" ]]; then
         sudo apt-get update
         sudo apt-get install -y gcc make bison flex bc libssl-dev libelf-dev dwarves git ccache curl
+        if [[ "${KERNEL_TOOLCHAIN,,}" == "clang" || "${KERNEL_TOOLCHAIN,,}" == "llvm" ]]; then
+            sudo apt-get install -y clang lld llvm
+        fi
     else
         sudo dnf install -y gcc make bison flex bc openssl-devel elfutils-libelf-devel ncurses-devel dwarves git ccache curl
+        if [[ "${KERNEL_TOOLCHAIN,,}" == "clang" || "${KERNEL_TOOLCHAIN,,}" == "llvm" ]]; then
+            sudo dnf install -y clang lld llvm
+        fi
     fi
 fi
 
@@ -229,6 +242,25 @@ load_patch_helpers() {
     fi
 
     # shellcheck source=../ci/lib/select_base.sh
+    . "$helpers"
+}
+
+# Toolchain selection (GCC default, Clang ThinLTO on request) comes from the
+# shared CI library so a local build passes the same LLVM=1/LLVM_IAS=1/LD flags
+# to every make call as the CI pipeline does.
+load_toolchain_helpers() {
+    if declare -F resolve_kernel_toolchain >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local helpers="$GAOKUN_DIR/scripts/ci/lib/toolchain.sh"
+    if [[ ! -f "$helpers" ]]; then
+        echo "ERROR: shared toolchain helpers not found: $helpers" >&2
+        echo "Set GAOKUN_DIR to the linux-gaokun-buildbot checkout." >&2
+        exit 1
+    fi
+
+    # shellcheck source=../ci/lib/toolchain.sh
     . "$helpers"
 }
 
@@ -619,7 +651,7 @@ build_kernel() {
         apply_kernelsu
 
         mkdir -p "$out_dir"
-        make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" gaokun3_defconfig
+        make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" "${KERNEL_MAKE_ARGS[@]}" gaokun3_defconfig
         "$KERN_SRC"/scripts/config --file "$out_dir/.config" --set-str LOCALVERSION "-gaokun3-el2"
     else
         out_dir="$KERN_OUT"
@@ -650,18 +682,21 @@ build_kernel() {
         apply_kernelsu
 
         mkdir -p "$out_dir"
-        make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" gaokun3_defconfig
+        make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" "${KERNEL_MAKE_ARGS[@]}" gaokun3_defconfig
     fi
 
-    # KernelSU has to be enabled in this variant's .config before olddefconfig
-    # resolves the unmet KPROBES dependency.
+    # Toolchain-dependent Kconfig (Clang ThinLTO) must be set in the generated
+    # .config before olddefconfig, and KernelSU before olddefconfig resolves the
+    # unmet KPROBES dependency.
+    apply_kernel_toolchain_config "$KERN_SRC" "$out_dir"
     configure_kernelsu_config "$out_dir"
 
     echo "Starting build..."
-    make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" olddefconfig
+    make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" "${KERNEL_MAKE_ARGS[@]}" olddefconfig
+    assert_kernel_toolchain_config "$out_dir"
     assert_kernelsu_enabled "$out_dir"
-    make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" -j"$(nproc)"
-    make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" modules_prepare
+    make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" "${KERNEL_MAKE_ARGS[@]}" -j"$(nproc)"
+    make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" "${KERNEL_MAKE_ARGS[@]}" modules_prepare
 
     local krel
     krel="$(<"$out_dir/include/config/kernel.release")"
@@ -692,7 +727,7 @@ build_kernel() {
         dtb_boot_dir="/boot/dtb-$krel/qcom"
     fi
 
-    sudo make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" INSTALL_MOD_PATH=/ modules_install
+    sudo make O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" "${KERNEL_MAKE_ARGS[@]}" INSTALL_MOD_PATH=/ modules_install
     sudo rm -f /lib/modules/"$krel"/{build,source}
 
     sudo cp "$out_dir"/arch/arm64/boot/Image /boot/vmlinuz-"$krel"
@@ -812,6 +847,26 @@ build_kernel() {
 if command -v ccache >/dev/null 2>&1; then
     echo "Resetting ccache statistics..."
     ccache -z
+fi
+
+load_toolchain_helpers
+resolve_kernel_toolchain || exit 1
+echo "Kernel toolchain: $KERNEL_TOOLCHAIN (LTO: $KERNEL_LTO)"
+if [[ "$KERNEL_TOOLCHAIN" == "clang" ]]; then
+    for tool in clang ld.lld llvm-ar; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            echo "ERROR: KERNEL_TOOLCHAIN=clang requires $tool on PATH; install it and retry." >&2
+            exit 1
+        fi
+    done
+fi
+# Fail early on an unsupported KERNEL_TUNE CPU name instead of deep in the build.
+if [[ -n "$KERNEL_TUNE" ]]; then
+    if [[ "$KERNEL_TOOLCHAIN" == "clang" ]]; then
+        validate_kernel_tune clang --target=aarch64-linux-gnu
+    else
+        validate_kernel_tune "${CROSS_COMPILE}gcc"
+    fi
 fi
 
 if [[ "$el2_choice" == "both" ]]; then

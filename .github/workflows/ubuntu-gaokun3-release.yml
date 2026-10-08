@@ -37,6 +37,14 @@ on:
         required: true
         default: false
         type: boolean
+      kernel_toolchain:
+        description: Kernel toolchain (gcc default, or clang for Clang/LLVM + ThinLTO)
+        required: true
+        default: "gcc"
+        type: choice
+        options:
+          - gcc
+          - clang
       rebuild_package_debs:
         description: Rebuild gaokun package DEBs before image build
         required: true
@@ -55,6 +63,7 @@ jobs:
       kernel_base: ${{ github.event.inputs.kernel_base }}
       build_el2: ${{ github.event.inputs.build_el2 == 'true' }}
       build_kernelsu: ${{ github.event.inputs.build_kernelsu == 'true' }}
+      kernel_toolchain: ${{ github.event.inputs.kernel_toolchain }}
     secrets: inherit
 
   build-and-release:
@@ -70,6 +79,7 @@ jobs:
       EXTRA_PACKAGES: ${{ github.event.inputs.extra_packages }}
       BUILD_EL2: ${{ github.event.inputs.build_el2 }}
       BUILD_KERNELSU: ${{ github.event.inputs.build_kernelsu }}
+      KERNEL_TOOLCHAIN: ${{ github.event.inputs.kernel_toolchain }}
       IMAGE_SIZE: 12G
       IMAGE_CHUNK_SIZE: 1900M
       GAOKUN_DIR: ${{ github.workspace }}
@@ -130,7 +140,11 @@ jobs:
             if [[ "$BUILD_KERNELSU" == "true" ]]; then
               profile="${profile}-ksu"
             fi
-            prefix="gaokun3-debs-${safe_kernel_tag}${base_suffix}-${profile}-"
+            toolchain_suffix=""
+            if [[ "${KERNEL_TOOLCHAIN:-gcc}" == "clang" ]]; then
+              toolchain_suffix="-clang"
+            fi
+            prefix="gaokun3-debs-${safe_kernel_tag}${base_suffix}-${profile}${toolchain_suffix}-"
 
             releases_json="$WORKDIR/releases.json"
             curl -fsSL \

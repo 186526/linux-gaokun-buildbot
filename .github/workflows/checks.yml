@@ -17,7 +17,48 @@ jobs:
           bash -n build.sh build.env
           find scripts -name '*.sh' -print0 | xargs -0 -n1 bash -n
       - name: Check new build entry points
-        run: shellcheck -S warning build.sh scripts/lib/kernel_source.sh scripts/ci/20_build_kernel_variants.sh scripts/local/build_kernel.sh
+        run: shellcheck -S warning build.sh scripts/lib/kernel_source.sh scripts/ci/20_build_kernel_variants.sh scripts/ci/lib/toolchain.sh scripts/local/build_kernel.sh
+      - name: Validate the kernel toolchain selection
+        run: |
+          set -euo pipefail
+          # GCC stays the default with no extra make arguments; Clang selects
+          # LLVM=1/LLVM_IAS=1/LD=ld.lld and ThinLTO; LTO=thin without clang is
+          # rejected. This guards the shared contract every entry point relies on.
+          run_case() {
+            local toolchain="$1" lto="$2" want_args="$3" want_lto="$4"
+            local out
+            out="$(
+              KERNEL_TOOLCHAIN="$toolchain" KERNEL_LTO="$lto" bash -c '
+                . scripts/ci/lib/toolchain.sh
+                resolve_kernel_toolchain
+                printf "%s|%s" "${KERNEL_MAKE_ARGS[*]:-}" "$KERNEL_LTO"
+              '
+            )"
+            [[ "$out" == "$want_args|$want_lto" ]] || {
+              echo "toolchain '$toolchain' lto '$lto': got '$out', want '$want_args|$want_lto'" >&2
+              exit 1
+            }
+          }
+          run_case gcc "" "" none
+          run_case clang "" "LLVM=1 LLVM_IAS=1 LD=ld.lld" thin
+          run_case clang none "LLVM=1 LLVM_IAS=1 LD=ld.lld" none
+          # KERNEL_TUNE appends KCFLAGS=-mtune=<cpu>; sc8280xp maps to cortex-x1.
+          tune_out="$(
+            KERNEL_TOOLCHAIN=clang KERNEL_TUNE=sc8280xp bash -c '
+              . scripts/ci/lib/toolchain.sh
+              resolve_kernel_toolchain
+              printf "%s" "${KERNEL_MAKE_ARGS[*]}"
+            '
+          )"
+          [[ "$tune_out" == *"KCFLAGS=-mtune=cortex-x1" ]] || {
+            echo "KERNEL_TUNE=sc8280xp did not add KCFLAGS=-mtune=cortex-x1 (got '$tune_out')" >&2
+            exit 1
+          }
+          if KERNEL_TOOLCHAIN=gcc KERNEL_LTO=thin bash -c '. scripts/ci/lib/toolchain.sh; resolve_kernel_toolchain' 2>/dev/null; then
+            echo "KERNEL_LTO=thin must be rejected with KERNEL_TOOLCHAIN=gcc" >&2
+            exit 1
+          fi
+          echo "kernel toolchain selection OK"
       - name: Check source protection and boot entries
         run: python3 -m unittest discover -s tests -v
       - name: Check the DSC timing-width patch chain

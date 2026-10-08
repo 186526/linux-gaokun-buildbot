@@ -12,6 +12,10 @@ resolve_kernel_base
 # shellcheck source=lib/kernelsu.sh
 . "$GAOKUN_DIR/scripts/ci/lib/kernelsu.sh"
 
+# shellcheck source=lib/toolchain.sh
+. "$GAOKUN_DIR/scripts/ci/lib/toolchain.sh"
+resolve_kernel_toolchain
+
 KERN_OUT="${KERN_OUT:-$WORKDIR/kernel-out}"
 KERN_SRC_BASE="${KERN_SRC_BASE:-$KERN_SRC}"
 KERN_SRC_EL2="${KERN_SRC_EL2:-$WORKDIR/linux-el2}"
@@ -26,6 +30,17 @@ if [[ "$(uname -m)" == "aarch64" ]]; then
   CROSS_COMPILE="${CROSS_COMPILE:-}"
 else
   CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
+fi
+
+# Confirm the compiler accepts the requested microarchitecture tuning before any
+# variant is configured, so an unsupported CPU name fails immediately instead of
+# deep inside the build. Portable builds (KERNEL_TUNE unset) skip this.
+if [[ -n "$KERNEL_TUNE" ]]; then
+  if [[ "$KERNEL_TOOLCHAIN" == "clang" ]]; then
+    validate_kernel_tune clang --target=aarch64-linux-gnu
+  else
+    validate_kernel_tune "${CROSS_COMPILE}gcc"
+  fi
 fi
 
 export ARCH=arm64
@@ -59,26 +74,28 @@ build_variant() {
   mkdir -p "$out_dir"
 
   unset KCONFIG_CONFIG
-  make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" gaokun3_defconfig
+  make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" "${KERNEL_MAKE_ARGS[@]}" gaokun3_defconfig
 
   if [[ -n "$localversion" ]]; then
     "$src_dir"/scripts/config --file "$out_dir/.config" --set-str LOCALVERSION "$localversion"
   fi
 
-  # KernelSU has to be enabled in the generated .config before olddefconfig
-  # resolves the unmet KPROBES dependency.
+  # Toolchain-dependent Kconfig (Clang ThinLTO) and KernelSU must both be set in
+  # the generated .config before olddefconfig resolves the unmet dependencies.
+  apply_kernel_toolchain_config "$src_dir" "$out_dir"
   if [[ "$kernelsu" == "true" ]]; then
     configure_kernel_su "$src_dir" "$out_dir"
   fi
 
-  make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" olddefconfig
+  make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" "${KERNEL_MAKE_ARGS[@]}" olddefconfig
 
+  assert_kernel_toolchain_config "$out_dir"
   if [[ "$kernelsu" == "true" ]]; then
     assert_kernelsu_enabled "$out_dir"
   fi
 
-  make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" -j"$(nproc)"
-  make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" modules_prepare
+  make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" "${KERNEL_MAKE_ARGS[@]}" -j"$(nproc)"
+  make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" "${KERNEL_MAKE_ARGS[@]}" modules_prepare
 }
 
 snapshot_tree() {
@@ -200,7 +217,7 @@ rm -f "$WORKDIR/kernel-release-el2.txt"
 
 configure_git_identity "$KERN_SRC_EL2"
 rm -rf "$KERN_OUT_EL2"
-make -C "$KERN_SRC_EL2" O="$KERN_OUT_EL2" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" clean
+make -C "$KERN_SRC_EL2" O="$KERN_OUT_EL2" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" "${KERNEL_MAKE_ARGS[@]}" clean
 apply_el2_series
 if [[ "$BUILD_KERNELSU" == "true" ]]; then
   if ! kernelsu_desc="$(integrate_kernelsu "$KERN_SRC_EL2")"; then
