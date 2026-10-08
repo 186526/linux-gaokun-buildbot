@@ -325,7 +325,7 @@ index 000000000000..69fa4db9b1a1
 +	};
 +};
 diff --git a/arch/arm64/boot/dts/qcom/sc8280xp-huawei-gaokun3.dts b/arch/arm64/boot/dts/qcom/sc8280xp-huawei-gaokun3.dts
-index f3c00be67081..b41f21366c73 100644
+index f3c00be67081..d679b92b72b4 100644
 --- a/arch/arm64/boot/dts/qcom/sc8280xp-huawei-gaokun3.dts
 +++ b/arch/arm64/boot/dts/qcom/sc8280xp-huawei-gaokun3.dts
 @@ -11,6 +11,7 @@
@@ -1058,7 +1058,7 @@ index f3c00be67081..b41f21366c73 100644
  	mode_pin_active: mode-pin-state {
  		pins = "gpio26";
  		function = "gpio";
-@@ -1411,6 +1629,39 @@ perst-n-pins {
+@@ -1411,6 +1629,48 @@ perst-n-pins {
  		};
  	};
  
@@ -1096,9 +1096,18 @@ index f3c00be67081..b41f21366c73 100644
 +	};
 +
  	ts0_default: ts0-default-state {
++		/* Select SPI before the touchscreen driver releases reset. */
++		mode-select-pins {
++			pins = "gpio174";
++			function = "gpio";
++			drive-strength = <16>;
++			bias-pull-up;
++			output-low;
++		};
++
  		int-n-pins {
  			pins = "gpio175";
-@@ -1424,7 +1675,6 @@ reset-n-pins {
+@@ -1424,7 +1684,6 @@ reset-n-pins {
  			function = "gpio";
  			drive-strength = <2>;
  			bias-disable;
@@ -1106,7 +1115,7 @@ index f3c00be67081..b41f21366c73 100644
  		};
  	};
  
-@@ -1485,3 +1735,5 @@ wlan_en: wlan-en-state {
+@@ -1485,3 +1744,5 @@ wlan_en: wlan-en-state {
  		bias-pull-down;
  	};
  };
