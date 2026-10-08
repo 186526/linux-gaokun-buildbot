@@ -4,7 +4,7 @@
 
 ## 环境
 
-目标机为 `real186@192.168.2.231`，已确认运行环境如下：
+目标机为 `real186@192.168.2.231`。以下为最初排查 seccomp 问题时的运行环境快照：
 
 ```text
 Kernel:       7.2.9-gaokun3-el2-xanmod1
@@ -12,6 +12,8 @@ Architecture: aarch64
 Waydroid:     Android 16 / SDK 36
 Manager:      me.weishu.kernelsu v3.3.0
 ```
+
+> 快照时间说明：上面的 `Kernel` 行是 2026-10-07 排查时的运行内核。2026-10-08 的只读复核（见“远端只读验证（2026-10-08）”）显示，目标机当前实际运行的是标准内核 `7.2.9-gaokun3-xanmod1` 的旧构建。标准与 EL2 变体共用同一 `gaokun3_defconfig`，因此本节的 KernelSU 配置项与 `/proc/kallsyms` 符号结论对两者同样成立。
 
 当前内核已经内建 KernelSU：
 
@@ -401,7 +403,7 @@ KernelSU: dispatcher installed at slot 18
 
 这实测打通了本文预测的因果链第一环：`CONFIG_KALLSYMS_ALL=y` 使 `sys_call_table` 解析成功，syscall 表槽位 hook（dispatcher）已安装。
 
-但该次启动仅持续约 128 秒（09:56:36–09:58:39），期间 Waydroid 容器处于 `STOPPED`，没有 zygote/`on_post_fs_data` 触发，因此日志中没有 `on_post_fs_data!` / `Searching manager` / `Crowning manager`。**“自动加冕是否恢复”在修复内核上尚未实测。**
+但该次启动仅持续约两分钟（墙钟 09:56:36–09:58:39；末条日志单调时间戳约 128 秒），期间 Waydroid 容器处于 `STOPPED`，没有 zygote/`on_post_fs_data` 触发，因此日志中没有 `on_post_fs_data!` / `Searching manager` / `Crowning manager`。**“自动加冕是否恢复”在修复内核上尚未实测。**
 
 ### Waydroid 侧状态
 
