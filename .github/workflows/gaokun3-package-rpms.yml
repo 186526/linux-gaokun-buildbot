@@ -30,6 +30,14 @@ on:
         required: true
         default: false
         type: boolean
+      kernel_toolchain:
+        description: Kernel toolchain (gcc default, or clang for Clang/LLVM + ThinLTO)
+        required: true
+        default: "gcc"
+        type: choice
+        options:
+          - gcc
+          - clang
   workflow_call:
     inputs:
       kernel_tag:
@@ -57,6 +65,11 @@ on:
         required: false
         default: false
         type: boolean
+      kernel_toolchain:
+        description: Kernel toolchain (gcc default, or clang for Clang/LLVM + ThinLTO)
+        required: false
+        default: "gcc"
+        type: string
     outputs:
       package_release_tag:
         description: Release tag containing the generated package bundle
@@ -77,6 +90,7 @@ jobs:
       KERNEL_BASE: ${{ inputs.kernel_base || github.event.inputs.kernel_base || 'mainline' }}
       BUILD_EL2: ${{ inputs.build_el2 || github.event.inputs.build_el2 || 'false' }}
       BUILD_KERNELSU: ${{ inputs.build_kernelsu || github.event.inputs.build_kernelsu || 'false' }}
+      KERNEL_TOOLCHAIN: ${{ inputs.kernel_toolchain || github.event.inputs.kernel_toolchain || 'gcc' }}
       GAOKUN_DIR: ${{ github.workspace }}
       WORKDIR: ${{ github.workspace }}/build-packages
       KERN_SRC: ${{ github.workspace }}/build-packages/kernel-src
@@ -135,6 +149,13 @@ jobs:
           sudo apt-get install -y \
             git make gcc bc bison flex cpio rsync kmod \
             libssl-dev libelf-dev dwarves ccache
+          if [[ "${KERNEL_TOOLCHAIN:-gcc}" == "clang" ]]; then
+            # LLVM=1 builds arm64 with clang, ld.lld, llvm-ar, llvm-nm and
+            # llvm-objcopy; ThinLTO needs ld.lld specifically.
+            sudo apt-get install -y clang lld llvm
+            clang --version
+            ld.lld --version
+          fi
 
       - name: Resolve package release tag
         id: release_meta
@@ -153,7 +174,13 @@ jobs:
           if [[ "$BUILD_KERNELSU" == "true" ]]; then
             profile="${profile}-ksu"
           fi
-          package_release_tag="gaokun3-rpms-${safe_kernel_tag}${base_suffix}-${profile}-$(date -u +%Y%m%d%H%M%S)"
+          # GCC builds keep their existing tag shape; only Clang builds add the
+          # suffix, so image workflows can tell the two toolchains apart.
+          toolchain_suffix=""
+          if [[ "${KERNEL_TOOLCHAIN:-gcc}" == "clang" ]]; then
+            toolchain_suffix="-clang"
+          fi
+          package_release_tag="gaokun3-rpms-${safe_kernel_tag}${base_suffix}-${profile}${toolchain_suffix}-$(date -u +%Y%m%d%H%M%S)"
 
           echo "package_release_tag=$package_release_tag" >> "$GITHUB_OUTPUT"
           echo "PACKAGE_RELEASE_TAG=$package_release_tag" >> "$GITHUB_ENV"
@@ -162,9 +189,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.ccache
-          key: gaokun3-packages-rpm-ccache-${{ env.KERNEL_BASE }}-${{ env.KERNEL_TAG }}-${{ env.BUILD_EL2 }}-${{ env.BUILD_KERNELSU }}-${{ hashFiles('patches/*.patch', 'patches/**/*.patch', 'patches/el2/*.patch', 'patches/kernelsu/**', 'defconfig/**', 'dts/**', 'drivers/**', 'packaging/**', 'firmware/**', 'scripts/ci/*.sh', 'scripts/ci/lib/*.sh', '.github/workflows/gaokun3-package-rpms.yml') }}
+          key: gaokun3-packages-rpm-ccache-${{ env.KERNEL_BASE }}-${{ env.KERNEL_TAG }}-${{ env.KERNEL_TOOLCHAIN }}-${{ env.BUILD_EL2 }}-${{ env.BUILD_KERNELSU }}-${{ hashFiles('patches/*.patch', 'patches/**/*.patch', 'patches/el2/*.patch', 'patches/kernelsu/**', 'defconfig/**', 'dts/**', 'drivers/**', 'packaging/**', 'firmware/**', 'scripts/ci/*.sh', 'scripts/ci/lib/*.sh', '.github/workflows/gaokun3-package-rpms.yml') }}
           restore-keys: |
-            gaokun3-packages-rpm-ccache-${{ env.KERNEL_BASE }}-${{ env.KERNEL_TAG }}-
+            gaokun3-packages-rpm-ccache-${{ env.KERNEL_BASE }}-${{ env.KERNEL_TAG }}-${{ env.KERNEL_TOOLCHAIN }}-
             gaokun3-packages-rpm-ccache-
 
       - name: Build gaokun kernel variants
@@ -193,10 +220,16 @@ jobs:
             -e PACKAGE_RELEASE_TAG="$PACKAGE_RELEASE_TAG" \
             -e BUILD_EL2="$BUILD_EL2" \
             -e BUILD_KERNELSU="$BUILD_KERNELSU" \
+            -e KERNEL_TOOLCHAIN="$KERNEL_TOOLCHAIN" \
             --user root \
             "fedora:${FEDORA_RELEASE}" \
             bash -euxo pipefail -c '
               dnf -y install git gcc make rpm-build kmod elfutils-libelf-devel tar gzip rsync
+              if [[ "${KERNEL_TOOLCHAIN:-gcc}" == "clang" ]]; then
+                # Fedora ships clang/llvm and lld as separate packages; the
+                # package script re-runs modules_install with LLVM=1.
+                dnf -y install clang lld llvm
+              fi
               chmod +x scripts/ci/70_build_package_rpms.sh
               scripts/ci/70_build_package_rpms.sh
             '
@@ -217,7 +250,7 @@ jobs:
         uses: softprops/action-gh-release@v2.6.1
         with:
           tag_name: ${{ steps.release_meta.outputs.package_release_tag }}
-          name: gaokun3 package RPMs - ${{ env.KERNEL_TAG }}${{ env.KERNEL_BASE == 'xanmod' && ' (XanMod)' || '' }}${{ env.BUILD_EL2 == 'true' && ' + EL2' || '' }}${{ env.BUILD_KERNELSU == 'true' && ' + KernelSU' || '' }}
+          name: gaokun3 package RPMs - ${{ env.KERNEL_TAG }}${{ env.KERNEL_BASE == 'xanmod' && ' (XanMod)' || '' }}${{ env.BUILD_EL2 == 'true' && ' + EL2' || '' }}${{ env.BUILD_KERNELSU == 'true' && ' + KernelSU' || '' }}${{ env.KERNEL_TOOLCHAIN == 'clang' && ' + Clang ThinLTO' || '' }}
           body_path: ${{ env.ARTIFACT_DIR }}/package-release-body.md
           prerelease: false
           make_latest: false

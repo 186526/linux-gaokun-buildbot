@@ -18,6 +18,12 @@ KERN_OUT_EL2="${KERN_OUT_EL2:-}"
 : "${KERN_SRC_BASE:?missing KERN_SRC_BASE}"
 : "${KERN_OUT:?missing KERN_OUT}"
 
+# modules_install is the only kernel make call in this script; it must use the
+# same toolchain the variant was built with, so reuse the shared resolver.
+# shellcheck source=lib/toolchain.sh
+. "$GAOKUN_DIR/scripts/ci/lib/toolchain.sh"
+resolve_kernel_toolchain
+
 BASE_KREL="$(cat "$WORKDIR/kernel-release.txt")"
 EL2_KREL=""
 if [[ -f "$WORKDIR/kernel-release-el2.txt" ]]; then
@@ -131,7 +137,7 @@ build_kernel_variant() {
   install -Dm644 "$out_dir/arch/arm64/boot/dts/qcom/$dtb_name" \
     "$image_stage/usr/lib/linux-image-$krel/qcom/$dtb_name"
 
-  make -C "$src_dir" O="$out_dir" ARCH=arm64 INSTALL_MOD_PATH="$modules_raw_stage" modules_install
+  make -C "$src_dir" O="$out_dir" ARCH=arm64 "${KERNEL_MAKE_ARGS[@]}" INSTALL_MOD_PATH="$modules_raw_stage" modules_install
   mv "$modules_raw_stage/lib/modules" "$modules_stage/lib/"
   rm -rf "$modules_raw_stage"
   rm -f "$modules_stage/lib/modules/$krel/build" \
@@ -311,6 +317,8 @@ cat >"$ARTIFACT_DIR/package-manifest.json" <<EOF
   "buildbot_commit": "${BUILDBOT_COMMIT}",
   "build_el2": ${BUILD_EL2},
   "build_kernelsu": ${BUILD_KERNELSU},
+  "kernel_toolchain": "${KERNEL_TOOLCHAIN}",
+  "kernel_lto": "${KERNEL_LTO}",
   "built_at_utc": "${BUILD_TIME_UTC}",
   "firmware_version": "${FIRMWARE_DEB_VERSION}",
   "kernels": {
@@ -336,6 +344,7 @@ cat >"$ARTIFACT_DIR/package-release-body.md" <<EOF
 - Kernel Tag: \`${KERNEL_TAG}\`
 - EL2 Package Set Included: \`${BUILD_EL2}\`
 - KernelSU Support Included: \`${BUILD_KERNELSU}\`
+- Kernel Toolchain: \`${KERNEL_TOOLCHAIN}\` (LTO: \`${KERNEL_LTO}\`)
 - Firmware Version: \`${FIRMWARE_DEB_VERSION}\`
 - Architecture: \`${DEB_ARCH}\`
 - Build Time (UTC): \`${BUILD_TIME_UTC}\`

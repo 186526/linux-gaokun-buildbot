@@ -18,6 +18,12 @@ KERN_OUT_EL2="${KERN_OUT_EL2:-}"
 : "${KERN_SRC_BASE:?missing KERN_SRC_BASE}"
 : "${KERN_OUT:?missing KERN_OUT}"
 
+# modules_install is the only kernel make call in this script; it must use the
+# same toolchain the variant was built with, so reuse the shared resolver.
+# shellcheck source=lib/toolchain.sh
+. "$GAOKUN_DIR/scripts/ci/lib/toolchain.sh"
+resolve_kernel_toolchain
+
 BASE_KREL="$(cat "$WORKDIR/kernel-release.txt")"
 EL2_KREL=""
 if [[ -f "$WORKDIR/kernel-release-el2.txt" ]]; then
@@ -106,7 +112,7 @@ add_drivers+=" ext4 btrfs nvme phy-qcom-qmp-pcie phy-qcom-qmp-combo phy-qcom-qmp
 install_items+=" /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcslpi8280.mbn /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qcadsp8280.mbn /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/qccdsp8280.mbn /lib/firmware/qcom/sc8280xp/SC8280XP-HUAWEI-GAOKUN3-tplg.bin /lib/firmware/qcom/sc8280xp/HUAWEI/gaokun3/audioreach-tplg.bin /lib/firmware/updates/qcom/a660_gmu.bin /lib/firmware/updates/qcom/a660_sqe.fw "
 EOF
 
-  make -C "$src_dir" O="$out_dir" ARCH=arm64 INSTALL_MOD_PATH="$modules_raw_stage" modules_install
+  make -C "$src_dir" O="$out_dir" ARCH=arm64 "${KERNEL_MAKE_ARGS[@]}" INSTALL_MOD_PATH="$modules_raw_stage" modules_install
   mv "$modules_raw_stage/lib/modules" "$modules_stage/usr/lib/"
   rm -rf "$modules_raw_stage"
   install -Dm644 "$out_dir/arch/arm64/boot/dts/qcom/$dtb_name" \
@@ -274,6 +280,8 @@ cat >"$ARTIFACT_DIR/package-manifest.json" <<EOF
   "buildbot_commit": "${BUILDBOT_COMMIT}",
   "build_el2": ${BUILD_EL2},
   "build_kernelsu": ${BUILD_KERNELSU},
+  "kernel_toolchain": "${KERNEL_TOOLCHAIN}",
+  "kernel_lto": "${KERNEL_LTO}",
   "built_at_utc": "${BUILD_TIME_UTC}",
   "firmware_version": "${FIRMWARE_RPM_VERSION}",
   "kernels": {
@@ -299,6 +307,7 @@ cat >"$ARTIFACT_DIR/package-release-body.md" <<EOF
 - Kernel Tag: \`${KERNEL_TAG}\`
 - EL2 Package Set Included: \`${BUILD_EL2}\`
 - KernelSU Support Included: \`${BUILD_KERNELSU}\`
+- Kernel Toolchain: \`${KERNEL_TOOLCHAIN}\` (LTO: \`${KERNEL_LTO}\`)
 - Firmware Version: \`${FIRMWARE_RPM_VERSION}\`
 - Architecture: \`aarch64\`
 - Build Time (UTC): \`${BUILD_TIME_UTC}\`
