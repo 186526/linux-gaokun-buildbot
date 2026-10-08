@@ -1,4 +1,4 @@
-From 21e082963ecf521f3a3df3a56e7c5a5d63898d2f Mon Sep 17 00:00:00 2001
+From c92d64b151ccc0fa4eb46c611bd8b33fc88f6524 Mon Sep 17 00:00:00 2001
 From: Kirikaze Chiyuki <me@chyk.ink>
 Date: Wed, 8 Apr 2026 08:03:45 +0000
 Subject: [PATCH] Input: touchscreen: add Himax HX83121A SPI driver
@@ -17,7 +17,13 @@ connected over SPI, featuring:
 The driver uses the panel-follower API for automatic power management
 and provides extensive runtime tunables via sysfs.
 
-Upstream source: https://github.com/chiyuki0325/EGoTouchRev-Linux
+Refresh the snapshot with the upstream fixes that follow it:
+
+- c91a7147 Input: himax-spi: rebuild read commands on retry and fit event stacks
+- e1de47e0 Input: himax-spi: detect jumps relative to predicted positions
+- 810a1293 Input: himax-spi: describe sense function parameters in kernel-doc
+
+Upstream source: https://github.com/chiyuki0325/EgoTouchRev-Linux
 
 Signed-off-by: Kirikaze Chiyuki <me@chyk.ink>
 Co-authored-by: Detach2233 <101026605+awarson2233@users.noreply.github.com>
@@ -26,19 +32,19 @@ Co-authored-by: Pengyu Luo <mitltlatltl@gmail.com>
 ---
  drivers/input/touchscreen/Kconfig          |   16 +
  drivers/input/touchscreen/Makefile         |    2 +
- drivers/input/touchscreen/himax-spi-core.c | 1478 ++++++++++++++++++++
- drivers/input/touchscreen/hx-algo.c        | 1133 +++++++++++++++
+ drivers/input/touchscreen/himax-spi-core.c | 1480 ++++++++++++++++++++
+ drivers/input/touchscreen/hx-algo.c        | 1128 +++++++++++++++
  drivers/input/touchscreen/hx-algo.h        |  191 +++
- 5 files changed, 2820 insertions(+)
+ 5 files changed, 2817 insertions(+)
  create mode 100644 drivers/input/touchscreen/himax-spi-core.c
  create mode 100644 drivers/input/touchscreen/hx-algo.c
  create mode 100644 drivers/input/touchscreen/hx-algo.h
 
 diff --git a/drivers/input/touchscreen/Kconfig b/drivers/input/touchscreen/Kconfig
-index 7d5b72ee0..b7b8cf5b5 100644
+index 9b9ae8ac3f..0aa7695621 100644
 --- a/drivers/input/touchscreen/Kconfig
 +++ b/drivers/input/touchscreen/Kconfig
-@@ -1424,4 +1424,20 @@ config TOUCHSCREEN_HIMAX_HX83112B
+@@ -1414,4 +1414,20 @@ config TOUCHSCREEN_HIMAX_HX83112B
  	  To compile this driver as a module, choose M here: the
  	  module will be called himax_hx83112b.
  
@@ -60,10 +66,10 @@ index 7d5b72ee0..b7b8cf5b5 100644
 +	  module will be called himax_hx83121a_spi.
  endif
 diff --git a/drivers/input/touchscreen/Makefile b/drivers/input/touchscreen/Makefile
-index ab9abd151..247c0a9dd 100644
+index bfd9de8338..329afd486d 100644
 --- a/drivers/input/touchscreen/Makefile
 +++ b/drivers/input/touchscreen/Makefile
-@@ -120,3 +120,5 @@ obj-$(CONFIG_TOUCHSCREEN_IQS5XX)	+= iqs5xx.o
+@@ -119,3 +119,5 @@ obj-$(CONFIG_TOUCHSCREEN_IQS5XX)	+= iqs5xx.o
  obj-$(CONFIG_TOUCHSCREEN_IQS7211)	+= iqs7211.o
  obj-$(CONFIG_TOUCHSCREEN_ZINITIX)	+= zinitix.o
  obj-$(CONFIG_TOUCHSCREEN_HIMAX_HX83112B)	+= himax_hx83112b.o
@@ -71,10 +77,10 @@ index ab9abd151..247c0a9dd 100644
 +himax_hx83121a_spi-y			:= himax-spi-core.o hx-algo.o
 diff --git a/drivers/input/touchscreen/himax-spi-core.c b/drivers/input/touchscreen/himax-spi-core.c
 new file mode 100644
-index 000000000..6b82c818d
+index 0000000000..01abfb86e7
 --- /dev/null
 +++ b/drivers/input/touchscreen/himax-spi-core.c
-@@ -0,0 +1,1478 @@
+@@ -0,0 +1,1480 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Himax SPI Driver
@@ -225,15 +231,9 @@ index 000000000..6b82c818d
 + */
 +static int himax_spi_read(struct himax_ts_data *ts, u8 cmd, u8 *buf, u32 len)
 +{
-+	int ret;
++	int ret = -EIO;
 +	int retry_cnt;
 +	struct spi_message msg;
-+
-+	memset(ts->xfer_buf, 0, HIMAX_BUS_R_HLEN + len);
-+	ts->xfer_buf[0] = HIMAX_SPI_FUNCTION_READ;
-+	ts->xfer_buf[1] = cmd;
-+	ts->xfer_buf[2] = 0x00;
-+
 +	struct spi_transfer xfer = {
 +		.len = HIMAX_BUS_R_HLEN + len,
 +		.tx_buf = ts->xfer_buf,
@@ -245,9 +245,14 @@ index 000000000..6b82c818d
 +	spi_message_add_tail(&xfer, &msg);
 +
 +	for (retry_cnt = 0; retry_cnt < HIMAX_BUS_RETRY; retry_cnt++) {
++		/* RX overwrites TX, including the command, on each attempt. */
++		memset(ts->xfer_buf, 0, HIMAX_BUS_R_HLEN + len);
++		ts->xfer_buf[0] = HIMAX_SPI_FUNCTION_READ;
++		ts->xfer_buf[1] = cmd;
++		ts->xfer_buf[2] = 0x00;
++
 +		ret = spi_sync(ts->spi, &msg);
 +		if (ret < 0)
-+			// TODO: 确定一般会不会出现重试的情况
 +			dev_err(&ts->spi->dev, "spi transfer error, %d, retry: %d", ret, retry_cnt);
 +		else
 +			break;
@@ -499,11 +504,12 @@ index 000000000..6b82c818d
 +}
 +
 +/**
-+ * sense_off: stop MCU
++ * himax_sense_off - stop the MCU
++ * @ts: touchscreen state
++ * @check_en: confirm if the firmware has stopped
++ *
 + * 1. request FW to stop
 + * 2. enter safe mode (and reset TCON for some ICs).
-+ *
-+ * @check_en: confirm if the FW is stopped
 + */
 +static int himax_sense_off(struct himax_ts_data *ts, bool check_en)
 +{
@@ -593,11 +599,12 @@ index 000000000..6b82c818d
 +}
 +
 +/**
++ * himax_sense_on - restart the MCU firmware
++ * @ts: touchscreen state
 + * @sw_reset: true for software reset, false for hardware reset
-+ *     true: write IC to leave safe mode
-+ *     false: pin reset
 + *
-+ * make MCU restart running the FW
++ * A software reset writes the IC to leave safe mode; a hardware reset
++ * uses the reset pin.
 + */
 +static int himax_sense_on(struct himax_ts_data *ts, bool sw_reset)
 +{
@@ -1449,7 +1456,8 @@ index 000000000..6b82c818d
 +	spi->cs_setup.value = HIMAX_SPI_CS_SETUP_TIME;
 +
 +	ts->spi = spi;
-+	ts->spi_xfer_max_sz = HIMAX_HX83121A_FULL_STACK_SZ;
++	/* Include the header so one transfer can read the full event stack. */
++	ts->spi_xfer_max_sz = HIMAX_HX83121A_FULL_STACK_SZ + HIMAX_BUS_R_HLEN;
 +	ts->xfer_buf_sz = ts->spi_xfer_max_sz;
 +	ts->event_buf_sz = HIMAX_HX83121A_FULL_STACK_SZ;
 +	ts->xfer_buf = devm_kzalloc(ts->dev, ts->xfer_buf_sz, GFP_KERNEL);
@@ -1555,10 +1563,10 @@ index 000000000..6b82c818d
 +MODULE_DESCRIPTION("Himax HX83121A SPI touchscreen driver");
 diff --git a/drivers/input/touchscreen/hx-algo.c b/drivers/input/touchscreen/hx-algo.c
 new file mode 100644
-index 000000000..74cd7ab7e
+index 0000000000..564f5fe3f4
 --- /dev/null
 +++ b/drivers/input/touchscreen/hx-algo.c
-@@ -0,0 +1,1133 @@
+@@ -0,0 +1,1128 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Himax HX83121A touch algorithm implementation.
@@ -2589,24 +2597,19 @@ index 000000000..74cd7ab7e
 +		if (!trk->active)
 +			continue;
 +
-+		/* Jump detection: if the actual (non-predicted) displacement
-+		 * exceeds the jump threshold, this is a finger swap, not a
-+		 * slide.  Release the old slot and let the detection spawn
-+		 * a new track at a *different* slot so that lift + press
-+		 * both appear in the same SYN_REPORT (zero added latency).
++		/*
++		 * Compare with the predicted position, not raw displacement:
++		 * a speed limit repeatedly resets fast slides before debounce
++		 * can expire. Release a jump into a different slot so lift and
++		 * press can appear in the same SYN_REPORT.
 +		 */
-+		if (algo->track_jump_dist2 > 0 && trk->age >= 2) {
-+			s32 dx = det[m->det_idx].x - trk->x;
-+			s32 dy = det[m->det_idx].y - trk->y;
-+			s64 actual_d2 = (s64)dx * dx + (s64)dy * dy;
-+
-+			if (actual_d2 > algo->track_jump_dist2) {
-+				hx_reset_track(trk);
-+				jump_released |= (1u << m->track_idx);
-+				track_matched[m->track_idx] = true;
-+				/* det stays unused → picked up by new-slot logic */
-+				continue;
-+			}
++		if (algo->track_jump_dist2 > 0 && trk->age >= 2 &&
++		    m->dist2 > algo->track_jump_dist2) {
++			hx_reset_track(trk);
++			jump_released |= (1u << m->track_idx);
++			track_matched[m->track_idx] = true;
++			/* det stays unused → picked up by new-slot logic */
++			continue;
 +		}
 +
 +		/* Update position: smooth or direct. */
@@ -2694,7 +2697,7 @@ index 000000000..74cd7ab7e
 +}
 diff --git a/drivers/input/touchscreen/hx-algo.h b/drivers/input/touchscreen/hx-algo.h
 new file mode 100644
-index 000000000..5e52aead8
+index 0000000000..5e52aead8b
 --- /dev/null
 +++ b/drivers/input/touchscreen/hx-algo.h
 @@ -0,0 +1,191 @@
@@ -2890,5 +2893,5 @@ index 000000000..5e52aead8
 +
 +#endif /* HX_ALGO_H */
 -- 
-2.43.0
+2.55.0
 
