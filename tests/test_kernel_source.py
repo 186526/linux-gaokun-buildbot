@@ -17,22 +17,36 @@ class SourcePreparation(unittest.TestCase):
         self.assertIn('build_variant "$KERN_SRC_EL2" "$KERN_OUT_EL2" "$KERN_LOCALVERSION_EL2"', script)
 
     def test_xanmod_dsc_change_requires_all_anchors(self):
+        # The anchor must be the patch's post-image, not the XanMod base's
+        # truncating form. Anchoring on the base form makes the helper report
+        # 0011 as already applied when 0005 is missing, so the pipeline skips it
+        # silently and the truncating DSC timing width stays in the build.
+        applied_file = (
+            '#include <drm/display/drm_dsc_helper.h>\n'
+            'timing->width = DIV_ROUND_UP(timing->width * drm_dsc_get_bpp_int(dsc),\n'
+            'timing->dce_bytes_per_line = msm_dsc_get_bytes_per_line(dsc);\n'
+        )
+        base_file = (
+            '#include <drm/display/drm_dsc_helper.h>\n'
+            'timing->width = timing->width * drm_dsc_get_bpp_int(dsc) /\n'
+            'timing->dce_bytes_per_line = msm_dsc_get_bytes_per_line(dsc);\n'
+        )
         with tempfile.TemporaryDirectory() as directory:
-            repo = Path(directory)
-            target = repo / 'drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c'
+            target = Path(directory) / 'drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c'
             target.parent.mkdir(parents=True)
-            target.write_text(
-                '#include <drm/display/drm_dsc_helper.h>\n'
-                'timing->width = timing->width * drm_dsc_get_bpp_int(dsc) /\n'
-                'timing->dce_bytes_per_line = msm_dsc_get_bytes_per_line(dsc);\n'
-            )
             command = [
                 'bash', '-euc',
                 '. "$1"; KERNEL_BASE=xanmod; xanmod_change_is_present "$2" "$3"',
                 'test', str(SELECT_BASE), directory,
                 '0011-drm-msm-dpu-restore-dsc-interface-data-width.patch',
             ]
+            # The rounded post-image counts as applied.
+            target.write_text(applied_file)
             self.assertEqual(subprocess.run(command, capture_output=True).returncode, 0)
+            # The truncating base form must NOT count as applied.
+            target.write_text(base_file)
+            self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
+            # A partial match must not count as applied either.
             target.write_text('#include <drm/display/drm_dsc_helper.h>\n')
             self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
 
