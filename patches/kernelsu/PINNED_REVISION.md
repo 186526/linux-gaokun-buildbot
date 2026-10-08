@@ -31,6 +31,34 @@ without the `git stash`, `git pull`, and branch checkout that script performs:
 Each step is skipped when it is already present, so the integration can run
 again on a tree that already carries it.
 
+## Source transformations
+
+KernelSU is not vendored, but the pinned revision is not built verbatim: every
+`*.patch` in this directory is applied to the clone with `git apply` before the
+driver is wired in. `git apply` fails on a mismatched hunk, so a transformation
+that no longer matches the pinned revision stops the build instead of silently
+producing a different kernel. The integration additionally asserts the guard is
+present in the transformed tree (`assert_kernelsu_source_guard`).
+
+| Patch | Purpose |
+| ----- | ------- |
+| `0001-selinux-skip-policy-rewrite-without-loaded-policy.patch` | Skip KernelSU's SELinux policy rewrite when no policy is loaded. |
+
+### 0001: skip the SELinux policy rewrite when no policy is loaded
+
+`apply_kernelsu_rules()` (`kernel/selinux/rules.c`) reads
+`old_pol = selinux_state.policy` and passes it to `ksu_dup_sepolicy()`, which
+dereferences `old_pol->policydb.len` with no NULL check. The execve hook runs
+that path when Android's `init` executes `second_stage`, which is before a
+policy is necessarily loaded. On a host that boots without an SELinux policy
+(no `/sys/fs/selinux`; active LSMs `capability,landlock,apparmor`, as in the
+Debian Waydroid image), `selinux_state.policy` is NULL and the kernel oopses,
+taking `init` and `zygote` down. The patch skips only the rule application when
+there is no policy to duplicate, and applies the same guard to
+`handle_sepolicy()`. It does not touch the syscall dispatcher, `CONFIG_KSU`,
+`CONFIG_KALLSYMS_ALL`, or the `on_post_fs_data` / manager auto-crown path, and
+it changes nothing when a policy is loaded.
+
 ## Configuration
 
 `gaokun3_defconfig` supplies `CONFIG_EXT4_FS`, but not the rest of what
@@ -57,5 +85,9 @@ enables `CONFIG_KPROBES`, `CONFIG_FTRACE`, and `CONFIG_KSU` in the generated
 ## Updating
 
 Change the commit in the table above and the defaults in
-`scripts/ci/lib/kernelsu.sh` in the same commit, then run a full package build
-and confirm `CONFIG_KSU=y` in the produced `kernel-out/.config`.
+`scripts/ci/lib/kernelsu.sh` in the same commit, then re-validate every patch
+under this directory against the new revision with
+`git apply --check patches/kernelsu/*.patch`, and run a full package build and
+confirm `CONFIG_KSU=y` in the produced `kernel-out/.config`. The build itself
+fails when a source transformation no longer applies or when the SELinux guard
+is absent from the transformed tree, so a stale patch cannot ship silently.
