@@ -1,0 +1,40 @@
+From aac3e7a03ea6fe04e25acef55f9bda5250d72141 Mon Sep 17 00:00:00 2001
+From: KawaiiHachimi <49330826+KawaiiHachimi@users.noreply.github.com>
+Date: Sun, 20 Sep 2026 21:57:20 +0900
+Subject: [PATCH] platform: arm64: gaokun-ec: return enable GPIO lookup errors
+
+The downstream enable GPIO support logs lookup errors but continues
+registering the lid switch, auxiliary devices and interrupt handler.
+In particular, EPROBE_DEFER never reaches the driver core, leaving an
+error pointer in enable_gpio instead of retrying the probe later.
+
+Return dev_err_probe() so deferred probes and permanent errors stop
+initialization. A missing optional GPIO (NULL) still proceeds normally.
+
+A host harness running the actual probe prefix injects EPROBE_DEFER,
+EIO and NULL. The parent reaches later registration in all three cases;
+the fix returns the two errors and proceeds only for NULL. The EC
+object builds with W=1 without warnings. Hardware suspend/resume still
+needs validation.
+
+Fixes: 323ca6a4c6b1 ("platform: arm64: huawei-gaokun-ec: introduce EC enable pin")
+Assisted-by: Codex:OpenAI-GPT
+---
+ drivers/platform/arm64/huawei-gaokun-ec.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/platform/arm64/huawei-gaokun-ec.c b/drivers/platform/arm64/huawei-gaokun-ec.c
+index b0a92a9a89..eb6e7c6a16 100644
+--- a/drivers/platform/arm64/huawei-gaokun-ec.c
++++ b/drivers/platform/arm64/huawei-gaokun-ec.c
+@@ -785,8 +785,8 @@ static int gaokun_ec_probe(struct i2c_client *client)
+ 	ec->enable_gpio = devm_gpiod_get_optional(dev, "enable",
+ 						  GPIOD_OUT_HIGH);
+ 	if (IS_ERR(ec->enable_gpio))
+-		dev_err_probe(dev, PTR_ERR(ec->enable_gpio),
+-			      "Failed to get enable-gpios\n");
++		return dev_err_probe(dev, PTR_ERR(ec->enable_gpio),
++				     "Failed to get enable-gpios\n");
+ 
+ 	/* Lid switch */
+ 	ec->idev = devm_input_allocate_device(dev);

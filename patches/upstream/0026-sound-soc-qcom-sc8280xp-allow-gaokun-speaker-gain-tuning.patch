@@ -1,0 +1,59 @@
+From 0e8c5867fad4157c7c651be1963c4c49f6abdfaa Mon Sep 17 00:00:00 2001
+From: cool <bilibili@att.net>
+Date: Thu, 24 Sep 2026 01:11:48 +0800
+Subject: [PATCH] ASoC: qcom: sc8280xp: allow Gaokun speaker gain tuning
+
+Allow the downstream Gaokun3 audio policy to use unity digital gain (84)
+and PA gain up to +18 dB (29). Restrict these ceilings to huawei,gaokun3;
+all other boards retain the existing -3 dB digital and 0 dB PA limits.
+
+The device owner selected the +18 dB PA setting after listening trials.
+The matching image UCM configuration selects the boot defaults, while
+WirePlumber keeps desktop volume in software. Do not add a prebuilt module,
+runtime module replacement, or gain-switching service to the image.
+
+This is downstream loudness policy, not calibrated speaker protection or
+a claim of long-term speaker safety. Keep digital amplification capped at
+unity rather than raising it above full scale.
+
+Validation: AArch64 sc8280xp.o builds with W=1; checkpatch is clean. Runtime
+gain-control readback has been tested on the owner's 7.2.6 device with the
+equivalent test module. Full boot testing of the new 7.2.7 image remains.
+
+Link: https://github.com/vahiru/gaokun-android/blob/823585fee8f2b820cdafd0fdc24a6bcd864e0dd8/patches/0015-asoc-sc8280xp-retune-wsa-speaker-gain-ceilings.patch
+Assisted-by: Codex:OpenAI-GPT
+---
+ sound/soc/qcom/sc8280xp.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
+index 98b15a527e..6ccbcc2581 100644
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -3,6 +3,7 @@
+ 
+ #include <dt-bindings/sound/qcom,q6afe.h>
+ #include <linux/module.h>
++#include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <sound/soc.h>
+ #include <sound/soc-dapm.h>
+@@ -38,6 +39,18 @@ static int sc8280xp_snd_init(struct snd_soc_pcm_runtime *rtd)
+ 		break;
+ 	case WSA_CODEC_DMA_RX_0:
+ 	case WSA_CODEC_DMA_RX_1:
++		if (of_machine_is_compatible("huawei,gaokun3")) {
++			/*
++			 * Downstream Gaokun tuning: keep digital gain at unity;
++			 * userspace selects the PA level below the +18 dB ceiling.
++			 * This is not calibrated active speaker protection.
++			 */
++			snd_soc_limit_volume(card, "WSA_RX0 Digital Volume", 84);
++			snd_soc_limit_volume(card, "WSA_RX1 Digital Volume", 84);
++			snd_soc_limit_volume(card, "SpkrLeft PA Volume", 29);
++			snd_soc_limit_volume(card, "SpkrRight PA Volume", 29);
++			break;
++		}
+ 		/*
+ 		 * Set limit of -3 dB on Digital Volume and 0 dB on PA Volume
+ 		 * to reduce the risk of speaker damage until we have active
