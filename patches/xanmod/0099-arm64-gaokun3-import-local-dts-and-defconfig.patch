@@ -5,19 +5,19 @@ Subject: [PATCH] arm64: gaokun3: import local dts and defconfig
 
 Signed-off-by: cool <bilibili@att.net>
 ---
- .../dts/qcom/sc8280xp-huawei-gaokun3-camera.dtsi   |  307 ++++++++++++
+ .../dts/qcom/sc8280xp-huawei-gaokun3-camera.dtsi   |  330 ++++++++++++
  .../boot/dts/qcom/sc8280xp-huawei-gaokun3.dts      |  466 +++++++++++++++----
- arch/arm64/configs/gaokun3_defconfig               |  507 ++++++++++++++++++++
- 3 files changed, 1179 insertions(+), 101 deletions(-)
+ arch/arm64/configs/gaokun3_defconfig               |  508 ++++++++++++++++++++
+ 3 files changed, 1203 insertions(+), 101 deletions(-)
  create mode 100644 arch/arm64/boot/dts/qcom/sc8280xp-huawei-gaokun3-camera.dtsi
  create mode 100644 arch/arm64/configs/gaokun3_defconfig
 
 diff --git a/arch/arm64/boot/dts/qcom/sc8280xp-huawei-gaokun3-camera.dtsi b/arch/arm64/boot/dts/qcom/sc8280xp-huawei-gaokun3-camera.dtsi
 new file mode 100644
-index 000000000..69fa4db9b
+index 000000000..2b200a77c13
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sc8280xp-huawei-gaokun3-camera.dtsi
-@@ -0,0 +1,307 @@
+@@ -0,0 +1,330 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Copyright (c) 2021, The Linux Foundation. All rights reserved.
@@ -80,6 +80,10 @@ index 000000000..69fa4db9b
 +		compatible = "regulator-fixed";
 +
 +		regulator-name = "vreg_camr";
++		/* Rear sensor digital core rail, gated by GPIO92 (Windows CAMS_RES_QRD).
++		 * The board LDO sets the real voltage; 1.2V is OV13B10 DVDD nominal. */
++		regulator-min-microvolt = <1200000>;
++		regulator-max-microvolt = <1200000>;
 +
 +		gpio = <&tlmm 92 GPIO_ACTIVE_HIGH>;
 +		enable-active-high;
@@ -142,13 +146,21 @@ index 000000000..69fa4db9b
 +	status = "okay";
 +
 +	ports {
++		/*
++		 * port@0: csiphy0 -> rear OV13B10. The board's Windows driver
++		 * package (CAMS_RES_QRD.bin) wires LDO2_B 2.8V (avdd), LDO2_C
++		 * 1.8V (dovdd), a GPIO92-gated rail (dvdd), reset GPIO7 and
++		 * MCLK4. L2B is shared with the panel's vddi (1.8V vote); the
++		 * sensor driver raises it to 2.8V while powered, exactly like
++		 * Windows.
++		 */
 +		port@0 {
 +			csiphy0_ep: endpoint@0 {
 +				reg = <0>;
 +
 +				clock-lanes = <7>;
 +				data-lanes = <0 1 2 3>;
-+				remote-endpoint = <&s5k3l6_ep>;
++				remote-endpoint = <&ov13b10_ep>;
 +			};
 +		};
 +
@@ -176,42 +188,53 @@ index 000000000..69fa4db9b
 +	};
 +
 +	/*
-+	 * https://source.puri.sm/Librem5/linux/-/blob/pureos/latest/drivers/media/i2c/s5k3l6xx.c
-+	 *
-+	 * poor image quality, no plan to extract downstream registers
-+	 * configuration for it. I think nobody uses camera without tuning
-+	 * to take photos. Front camera with conference is enough.
-+	 *
-+	 * This sensor has never been detected on 2023 model
++	 * Rear camera. The board's Windows driver package ships two rear modules
++	 * (ofilm_ov13b10 and lijing_s5k3l6); on this unit a bus scan with the
++	 * rails up answered at 0x36 (OV13B10) and 0x50 (module EEPROM), nothing
++	 * at 0x10 - so it is the OV13B10. Rails from CAMS_RES_QRD.bin: LDO2_B
++	 * 2.8V (avdd, shared with the panel's 1.8V vddi - the driver raises it
++	 * while powered), LDO2_C 1.8V (dovdd), GPIO92-gated core rail (dvdd),
++	 * reset GPIO7, MCLK4. The upstream ov13b10 register tables assume a
++	 * 19.2 MHz MCLK.
 +	 */
-+	camera_rear: camera@10 {
-+		compatible = "samsung,s5k3l6xx";
-+		reg = <0x10>;
++	camera_rear: camera@36 {
++		compatible = "ovti,ov13b10";
++		reg = <0x36>;
 +
 +		pinctrl-0 = <&camr_rgb_default>;
 +		pinctrl-names = "default";
 +
 +		clocks = <&camcc CAMCC_MCLK4_CLK>;
-+		clock-names = "mclk";
-+		clock-frequency = <24000000>;
++		assigned-clocks = <&camcc CAMCC_MCLK4_CLK>;
++		assigned-clock-rates = <19200000>;
 +
-+		rstn-gpios = <&tlmm 7 GPIO_ACTIVE_LOW>;
++		reset-gpios = <&tlmm 7 GPIO_ACTIVE_LOW>;
 +
-+		vddio-supply = <&vreg_camr>;
-+		vdda-supply = <&vreg_l2b>; // 2.8v
-+		vddd-supply = <&vreg_l2c>; // 1.8v
-+
-+		leds = <&privacy_led>; // &camera_flash can't be enabled for now
-+		led-names = "privacy";
++		avdd-supply = <&vreg_l2b>;
++		dovdd-supply = <&vreg_l2c>;
++		dvdd-supply = <&vreg_camr>;
 +
 +		lens-focus = <&voice_coil_motor>;
 +
++		/*
++		 * Same indicator as the front camera (GPIO34, white:indicator).
++		 * The removed s5k3l6 rear node carried it too; v4l2 lights it on
++		 * s_stream (v4l2-subdev.c call_s_stream), so either sensor
++		 * streaming turns it on. Not async: led_get() is not a v4l2
++		 * subdev, unlike flash-leds.
++		 */
++		leds = <&privacy_led>;
++		led-names = "privacy";
++
 +		orientation = <1>;
-+		rotation = <180>; /* FIXME */
++		/* Counter-clockwise (video-interface-devices.yaml). Confirmed on
++		 * device 2026-09-24: preview upright, SENSOR_ORIENTATION 180. */
++		rotation = <180>;
 +
 +		port {
-+			s5k3l6_ep: endpoint {
++			ov13b10_ep: endpoint {
 +				data-lanes = <1 2 3 4>;
++				link-frequencies = /bits/ 64 <560000000>;
 +				remote-endpoint = <&csiphy0_ep>;
 +			};
 +		};
@@ -1135,10 +1158,10 @@ index cd575e20d..d679b92b7 100644
 +#include "sc8280xp-huawei-gaokun3-camera.dtsi"
 diff --git a/arch/arm64/configs/gaokun3_defconfig b/arch/arm64/configs/gaokun3_defconfig
 new file mode 100644
-index 000000000..9d8176f36
+index 000000000..9fede9ff010
 --- /dev/null
 +++ b/arch/arm64/configs/gaokun3_defconfig
-@@ -0,0 +1,507 @@
+@@ -0,0 +1,508 @@
 +CONFIG_LOCALVERSION="-gaokun3"
 +# CONFIG_LOCALVERSION_AUTO is not set
 +CONFIG_SYSVIPC=y
@@ -1448,6 +1471,7 @@ index 000000000..9d8176f36
 +CONFIG_VIDEO_QCOM_CAMSS=m
 +CONFIG_VIDEO_QCOM_VENUS=m
 +CONFIG_VIDEO_HI846=m
++CONFIG_VIDEO_OV13B10=m
 +CONFIG_VIDEO_DW9714=m
 +CONFIG_DRM=y
 +CONFIG_DRM_LOAD_EDID_FIRMWARE=y
@@ -1646,3 +1670,4 @@ index 000000000..9d8176f36
 +CONFIG_DEBUG_FS=y
 +# CONFIG_FTRACE is not set
 +# CONFIG_RUNTIME_TESTING_MENU is not set
+

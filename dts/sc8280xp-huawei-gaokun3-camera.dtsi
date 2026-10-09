@@ -60,6 +60,10 @@
 		compatible = "regulator-fixed";
 
 		regulator-name = "vreg_camr";
+		/* Rear sensor digital core rail, gated by GPIO92 (Windows CAMS_RES_QRD).
+		 * The board LDO sets the real voltage; 1.2V is OV13B10 DVDD nominal. */
+		regulator-min-microvolt = <1200000>;
+		regulator-max-microvolt = <1200000>;
 
 		gpio = <&tlmm 92 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
@@ -122,13 +126,21 @@
 	status = "okay";
 
 	ports {
+		/*
+		 * port@0: csiphy0 -> rear OV13B10. The board's Windows driver
+		 * package (CAMS_RES_QRD.bin) wires LDO2_B 2.8V (avdd), LDO2_C
+		 * 1.8V (dovdd), a GPIO92-gated rail (dvdd), reset GPIO7 and
+		 * MCLK4. L2B is shared with the panel's vddi (1.8V vote); the
+		 * sensor driver raises it to 2.8V while powered, exactly like
+		 * Windows.
+		 */
 		port@0 {
 			csiphy0_ep: endpoint@0 {
 				reg = <0>;
 
 				clock-lanes = <7>;
 				data-lanes = <0 1 2 3>;
-				remote-endpoint = <&s5k3l6_ep>;
+				remote-endpoint = <&ov13b10_ep>;
 			};
 		};
 
@@ -156,42 +168,53 @@
 	};
 
 	/*
-	 * https://source.puri.sm/Librem5/linux/-/blob/pureos/latest/drivers/media/i2c/s5k3l6xx.c
-	 *
-	 * poor image quality, no plan to extract downstream registers
-	 * configuration for it. I think nobody uses camera without tuning
-	 * to take photos. Front camera with conference is enough.
-	 *
-	 * This sensor has never been detected on 2023 model
+	 * Rear camera. The board's Windows driver package ships two rear modules
+	 * (ofilm_ov13b10 and lijing_s5k3l6); on this unit a bus scan with the
+	 * rails up answered at 0x36 (OV13B10) and 0x50 (module EEPROM), nothing
+	 * at 0x10 - so it is the OV13B10. Rails from CAMS_RES_QRD.bin: LDO2_B
+	 * 2.8V (avdd, shared with the panel's 1.8V vddi - the driver raises it
+	 * while powered), LDO2_C 1.8V (dovdd), GPIO92-gated core rail (dvdd),
+	 * reset GPIO7, MCLK4. The upstream ov13b10 register tables assume a
+	 * 19.2 MHz MCLK.
 	 */
-	camera_rear: camera@10 {
-		compatible = "samsung,s5k3l6xx";
-		reg = <0x10>;
+	camera_rear: camera@36 {
+		compatible = "ovti,ov13b10";
+		reg = <0x36>;
 
 		pinctrl-0 = <&camr_rgb_default>;
 		pinctrl-names = "default";
 
 		clocks = <&camcc CAMCC_MCLK4_CLK>;
-		clock-names = "mclk";
-		clock-frequency = <24000000>;
+		assigned-clocks = <&camcc CAMCC_MCLK4_CLK>;
+		assigned-clock-rates = <19200000>;
 
-		rstn-gpios = <&tlmm 7 GPIO_ACTIVE_LOW>;
+		reset-gpios = <&tlmm 7 GPIO_ACTIVE_LOW>;
 
-		vddio-supply = <&vreg_camr>;
-		vdda-supply = <&vreg_l2b>; // 2.8v
-		vddd-supply = <&vreg_l2c>; // 1.8v
-
-		leds = <&privacy_led>; // &camera_flash can't be enabled for now
-		led-names = "privacy";
+		avdd-supply = <&vreg_l2b>;
+		dovdd-supply = <&vreg_l2c>;
+		dvdd-supply = <&vreg_camr>;
 
 		lens-focus = <&voice_coil_motor>;
 
+		/*
+		 * Same indicator as the front camera (GPIO34, white:indicator).
+		 * The removed s5k3l6 rear node carried it too; v4l2 lights it on
+		 * s_stream (v4l2-subdev.c call_s_stream), so either sensor
+		 * streaming turns it on. Not async: led_get() is not a v4l2
+		 * subdev, unlike flash-leds.
+		 */
+		leds = <&privacy_led>;
+		led-names = "privacy";
+
 		orientation = <1>;
-		rotation = <180>; /* FIXME */
+		/* Counter-clockwise (video-interface-devices.yaml). Confirmed on
+		 * device 2026-09-24: preview upright, SENSOR_ORIENTATION 180. */
+		rotation = <180>;
 
 		port {
-			s5k3l6_ep: endpoint {
+			ov13b10_ep: endpoint {
 				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <560000000>;
 				remote-endpoint = <&csiphy0_ep>;
 			};
 		};
