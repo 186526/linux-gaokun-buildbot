@@ -35,7 +35,7 @@
 | DSC 默认启用、backlight regulator | 保留并待实机评估 | 基线 DSC 默认 false；基线供电列表无 bl，而板级 DTS 使用 GPIO0 的 bl-supply。不能按“panel 已上游”直接删除这两个行为差异 |
 | EC / UCSI | 主线实现为本体 | EC DTS 保留 GPIO 103 / PDC 215；旧 UCSI、q6apm 删除项仍需语义审查 |
 | HI846 4 个提交及 camera DTS | 后摄改用 OV13B10，仍属独立功能 | 后摄节点原写无驱动的 `samsung,s5k3l6xx`，阻塞整个 notifier；见「相机与 SLPI」 |
-| EL2 | 独立推进、默认关闭 | 仍无已验证的 EL2 SHA，不能发布为普通内核功能；不可重启远程处理器的显式守卫已加入，见「相机与 SLPI」 |
+| EL2 | 独立推进；CI 默认构建，验证仍待实机 | 仍无已验证的 EL2 SHA，不能发布为普通内核功能；CI 默认组合已包含 `build_el2=true`，但产物是否可用仍需实机验证；不可重启远程处理器的显式守卫已加入，见「相机与 SLPI」 |
 | 旧 touchscreen tuner | 待算法选择后决定 | 不能在旧算法仍在使用时直接删除对应工具 |
 
 ## 触摸屏：已吸收两项独立修复，整体替换仍待评估

@@ -1,24 +1,28 @@
 # Clang ThinLTO kernel builds
 
-GCC remains the default toolchain for every build entry point. Setting
-`KERNEL_TOOLCHAIN=clang` switches a build to Clang/LLVM and enables ThinLTO; no
-other input changes, and the resulting packages keep the same payload layout,
-package names, and boot behaviour as a GCC build.
+GCC remains the script-level default for every build entry point, so a bare
+`scripts/ci/*.sh` invocation is unchanged. The CI workflows, however, default to
+the reviewed profile (`kernel_toolchain=clang` plus `kernel_tune=sc8280xp`);
+setting `kernel_toolchain=gcc` (or `KERNEL_TOOLCHAIN=gcc`) restores the previous
+GCC behaviour, and `KERNEL_TOOLCHAIN=clang` switches a build to Clang/LLVM and
+enables ThinLTO. No other input changes, and the resulting packages keep the same
+payload layout, package names, and boot behaviour as a GCC build.
 
 ## Selecting the toolchain
 
-| Variable | Values | Default | Effect |
-| -------- | ------ | ------- | ------ |
-| `KERNEL_TOOLCHAIN` | `gcc`, `clang` | `gcc` | Compiler/binutils family for the standard and EL2 variants |
-| `KERNEL_LTO` | `thin`, `none` | `thin` when `KERNEL_TOOLCHAIN=clang`, otherwise `none` | `thin` selects ThinLTO; `none` keeps LTO off |
-| `KERNEL_TUNE` | a CPU name (`cortex-x1c`, `cortex-a78`, ...) or one of the SC8280XP aliases `sc8280xp` / `8cx-gen3` / `8cxgen3` | unset | Appends tuning to `KCFLAGS`; the SC8280XP aliases select `-march=armv8.4-a+crypto -mtune=cortex-x1c`, other values select `-mtune=<cpu>` only; unset keeps the portable armv8-a baseline |
+| Variable | Values | Script default | CI workflow default | Effect |
+| -------- | ------ | -------------- | ------------------- | ------ |
+| `KERNEL_TOOLCHAIN` | `gcc`, `clang` | `gcc` | `clang` | Compiler/binutils family for the standard and EL2 variants |
+| `KERNEL_LTO` | `thin`, `none` | `thin` when `KERNEL_TOOLCHAIN=clang`, otherwise `none` | same | `thin` selects ThinLTO; `none` keeps LTO off |
+| `KERNEL_TUNE` | a CPU name (`cortex-x1c`, `cortex-a78`, ...) or one of the SC8280XP aliases `sc8280xp` / `8cx-gen3` / `8cxgen3` | unset | `sc8280xp` | Appends tuning to `KCFLAGS`; the SC8280XP aliases select `-march=armv8.4-a+crypto -mtune=cortex-x1c`, other values select `-mtune=<cpu>` only; unset keeps the portable armv8-a baseline |
 
 `KERNEL_LTO=thin` with `KERNEL_TOOLCHAIN=gcc` is rejected, because
 `CONFIG_LTO_CLANG_THIN` needs the Clang toolchain.
 
-The `KERNEL_TUNE` selection is exported as the `kernel_tune` dispatch and
-`workflow_call` input on the package workflows, so a dispatched run selects the
-same profile a local build would. Leave it empty for the portable baseline.
+The `KERNEL_TUNE` selection is exposed as the `kernel_tune` input on both the
+package workflows and the image workflows, so a dispatched run selects the same
+profile a local build would. The CI default is `sc8280xp`; pass an empty value to
+get the portable baseline.
 
 Local pinned build:
 
@@ -31,15 +35,16 @@ Legacy on-device helper:
 ```bash
 export KERNEL_TOOLCHAIN=clang
 export KERNEL_LTO=thin
-export KERNEL_TUNE=sc8280xp      # opt-in: -march=armv8.4-a+crypto -mtune=cortex-x1c
+export KERNEL_TUNE=sc8280xp      # -march=armv8.4-a+crypto -mtune=cortex-x1c (unset for the portable baseline)
 export INSTALL_DEPS=true          # installs clang, lld, and llvm
 scripts/local/build_kernel.sh < /dev/null
 ```
 
 The `checks.yml` workflow additionally runs `shellcheck` over
 `scripts/ci/lib/toolchain.sh` and asserts the `KERNEL_TUNE` selection (the
-SC8280XP profile and a bare CPU name), and the package workflows expose
-`kernel_toolchain` and `kernel_tune` dispatch inputs.
+SC8280XP profile and a bare CPU name). The package workflows and the image
+workflows all expose `kernel_toolchain` and `kernel_tune` dispatch inputs; the
+image workflows forward `kernel_tune` to the reusable package workflow they call.
 
 ## Exact make invocation
 
@@ -91,7 +96,7 @@ The flags mean:
 In GCC mode `KERNEL_MAKE_ARGS` is empty and the make command lines are byte for
 byte the previous ones.
 
-## Target tuning (opt-in)
+## Target tuning
 
 `KERNEL_TUNE` selects the target tuning appended to `KCFLAGS` for the Snapdragon
 8cx Gen 3 (SC8280XP). Two forms are accepted:
@@ -118,9 +123,9 @@ ISA selection (`-march`) and microarchitecture tuning (`-mtune`) are distinct:
   `-mgeneral-regs-only` constraint before any variant is configured, so an
   unsupported combination fails immediately. It is a no-op when `KERNEL_TUNE` is
   unset.
-- `KERNEL_TUNE` is exposed as the `kernel_tune` input on the package workflows
-  and defaults to empty, so a dispatched release run stays portable unless the
-  caller explicitly selects a profile.
+- `KERNEL_TUNE` is exposed as the `kernel_tune` input on the package and image
+  workflows and defaults to `sc8280xp`; pass an empty value for the portable
+  baseline.
 
 ## Kconfig handling and assertions
 
@@ -189,7 +194,8 @@ before building, which validates the toolchain early.
   here. The authoritative validation is the `gaokun3-package-debs` or
   `gaokun3-package-rpms` workflow dispatched with `kernel_toolchain=clang`, and
   then an image workflow built from that package release and booted on the
-  device.
-- Existing GCC builds are unchanged: with `KERNEL_TOOLCHAIN` unset the
-  `KERNEL_MAKE_ARGS` array is empty and every make command line matches the
-  previous ones.
+  device. Changing the CI defaults to Clang does not itself prove the default
+  profile boots: the first dispatch of the default combination is that test.
+- With `KERNEL_TOOLCHAIN` unset, `KERNEL_MAKE_ARGS` is empty and every make
+  command line matches the previous GCC ones; the workflow defaults select
+  Clang, so restore GCC there with `kernel_toolchain=gcc`.

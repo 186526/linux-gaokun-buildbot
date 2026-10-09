@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       kernel_tag:
-        description: Linux kernel tag
+        description: Linux kernel tag (XanMod uses the real tag, e.g. 7.2.9-xanmod1)
         required: true
-        default: "v7.2-rc2"
+        default: "7.2.9-xanmod1"
       kernel_base:
         description: Kernel base (mainline or xanmod)
         required: true
-        default: "mainline"
+        default: "xanmod"
         type: choice
         options:
           - mainline
@@ -23,32 +23,40 @@ on:
       build_el2:
         description: Build extra -gaokun3-el2 kernel packages
         required: true
-        default: false
+        default: true
         type: boolean
       build_kernelsu:
         description: Build KernelSU support into the kernel packages
         required: true
-        default: false
+        default: true
         type: boolean
       kernel_toolchain:
-        description: Kernel toolchain (gcc default, or clang for Clang/LLVM + ThinLTO)
+        description: Kernel toolchain (clang default for Clang/LLVM + ThinLTO; gcc for the portable baseline)
         required: true
-        default: "gcc"
+        default: "clang"
         type: choice
         options:
           - gcc
           - clang
+      kernel_tune:
+        description: >-
+          Target tuning; the SC8280XP profile (sc8280xp / 8cx-gen3 / 8cxgen3)
+          selects -march=armv8.4-a+crypto -mtune=cortex-x1c, other values select
+          -mtune=<cpu> only, empty keeps the portable baseline (default sc8280xp)
+        required: false
+        default: "sc8280xp"
+        type: string
   workflow_call:
     inputs:
       kernel_tag:
-        description: Linux kernel tag
+        description: Linux kernel tag (XanMod uses the real tag, e.g. 7.2.9-xanmod1)
         required: false
-        default: "v7.2-rc2"
+        default: "7.2.9-xanmod1"
         type: string
       kernel_base:
         description: Kernel base (mainline or xanmod)
         required: false
-        default: "mainline"
+        default: "xanmod"
         type: string
       publish_release:
         description: Publish packages as a GitHub release
@@ -58,17 +66,25 @@ on:
       build_el2:
         description: Build extra -gaokun3-el2 kernel packages
         required: false
-        default: false
+        default: true
         type: boolean
       build_kernelsu:
         description: Build KernelSU support into the kernel packages
         required: false
-        default: false
+        default: true
         type: boolean
       kernel_toolchain:
-        description: Kernel toolchain (gcc default, or clang for Clang/LLVM + ThinLTO)
+        description: Kernel toolchain (clang default for Clang/LLVM + ThinLTO; gcc for the portable baseline)
         required: false
-        default: "gcc"
+        default: "clang"
+        type: string
+      kernel_tune:
+        description: >-
+          Target tuning; the SC8280XP profile (sc8280xp / 8cx-gen3 / 8cxgen3)
+          selects -march=armv8.4-a+crypto -mtune=cortex-x1c, other values select
+          -mtune=<cpu> only, empty keeps the portable baseline (default sc8280xp)
+        required: false
+        default: "sc8280xp"
         type: string
     outputs:
       package_release_tag:
@@ -87,10 +103,11 @@ jobs:
     env:
       TZ: UTC
       KERNEL_TAG: ${{ inputs.kernel_tag || github.event.inputs.kernel_tag }}
-      KERNEL_BASE: ${{ inputs.kernel_base || github.event.inputs.kernel_base || 'mainline' }}
-      BUILD_EL2: ${{ inputs.build_el2 || github.event.inputs.build_el2 || 'false' }}
-      BUILD_KERNELSU: ${{ inputs.build_kernelsu || github.event.inputs.build_kernelsu || 'false' }}
-      KERNEL_TOOLCHAIN: ${{ inputs.kernel_toolchain || github.event.inputs.kernel_toolchain || 'gcc' }}
+      KERNEL_BASE: ${{ inputs.kernel_base || github.event.inputs.kernel_base || 'xanmod' }}
+      BUILD_EL2: ${{ inputs.build_el2 || github.event.inputs.build_el2 || 'true' }}
+      BUILD_KERNELSU: ${{ inputs.build_kernelsu || github.event.inputs.build_kernelsu || 'true' }}
+      KERNEL_TOOLCHAIN: ${{ inputs.kernel_toolchain || github.event.inputs.kernel_toolchain || 'clang' }}
+      KERNEL_TUNE: ${{ inputs.kernel_tune || github.event.inputs.kernel_tune || 'sc8280xp' }}
       GAOKUN_DIR: ${{ github.workspace }}
       WORKDIR: ${{ github.workspace }}/build-packages
       KERN_SRC: ${{ github.workspace }}/build-packages/kernel-src
@@ -108,7 +125,25 @@ jobs:
       - name: Load reviewed build inputs
         run: |
           set -euo pipefail
+          # The requested dispatch label is authoritative for artifact naming.
+          # build.env pins the source inputs, but its KERNEL_TAG is only the
+          # local-build default (gaokun3); sourcing it here must not clobber the
+          # tag the caller asked for. The image workflows locate the package
+          # release by that tag (gaokun3-rpms-<tag>-<base>-<profile>-<ts>) and
+          # reject a manifest whose kernel_tag differs, so the requested label
+          # has to survive.
+          requested_kernel_tag="${KERNEL_TAG:-}"
           . ./build.env
+          if [[ -n "$requested_kernel_tag" ]]; then
+            KERNEL_TAG="$requested_kernel_tag"
+          fi
+          # XanMod source is always cloned at KERNEL_XANMOD_TAG, so the naming
+          # label must equal it; otherwise the manifest would misdescribe the
+          # cloned tree and the image workflows could not match the release.
+          if [[ "${KERNEL_BASE:-xanmod}" == "xanmod" && "$KERNEL_TAG" != "$KERNEL_XANMOD_TAG" ]]; then
+            echo "kernel_tag ${KERNEL_TAG} must equal KERNEL_XANMOD_TAG ${KERNEL_XANMOD_TAG} when kernel_base=xanmod" >&2
+            exit 1
+          fi
           echo "BUILDBOT_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
           for name in KERNEL_REPOSITORY KERNEL_TAG KERNEL_COMMIT KERNEL_EL2_COMMIT FEDORA_RELEASE UBUNTU_RELEASE; do
             printf '%s=%s\n' "$name" "${!name}" >> "$GITHUB_ENV"
@@ -126,7 +161,7 @@ jobs:
           # applies later, so it is absent from the freshly cloned tag.
           # shellcheck source=scripts/lib/kernel_source.sh
           . ./scripts/lib/kernel_source.sh
-          if [[ "${KERNEL_BASE:-mainline}" == "xanmod" ]]; then
+          if [[ "${KERNEL_BASE:-xanmod}" == "xanmod" ]]; then
             if [[ -d "$KERN_SRC" ]]; then
               echo "KERN_SRC $KERN_SRC already exists; refusing to re-clone" >&2
               exit 1
@@ -164,7 +199,7 @@ jobs:
           safe_kernel_tag="${KERNEL_TAG//\//-}"
           safe_kernel_tag="${safe_kernel_tag//[^A-Za-z0-9._-]/-}"
           base_suffix=""
-          if [[ "${KERNEL_BASE:-mainline}" == "xanmod" ]]; then
+          if [[ "${KERNEL_BASE:-xanmod}" == "xanmod" ]]; then
             base_suffix="-xanmod"
           fi
           profile="std"
@@ -221,6 +256,7 @@ jobs:
             -e BUILD_EL2="$BUILD_EL2" \
             -e BUILD_KERNELSU="$BUILD_KERNELSU" \
             -e KERNEL_TOOLCHAIN="$KERNEL_TOOLCHAIN" \
+            -e KERNEL_TUNE="$KERNEL_TUNE" \
             --user root \
             "fedora:${FEDORA_RELEASE}" \
             bash -euxo pipefail -c '

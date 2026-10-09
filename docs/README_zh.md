@@ -4,9 +4,21 @@
 
 面向华为 MateBook E Go 2023（代号 `gaokun3`）、基于高通骁龙 8cx Gen3（`SC8280XP`）平台的 Linux 镜像构建脚本、工具和固件。内核源码、驱动、设备树及配置在独立的下游内核仓库维护。
 
-**迁移草案，尚不可发布。** 内核源码在独立下游仓库 [gaokun3/linux](https://github.com/gaokun3/linux) 维护，本仓库为 [186526/linux-gaokun-buildbot](https://github.com/186526/linux-gaokun-buildbot)；Iris/Himax/EC 候选已通过完整内核编译、DEB/RPM 打包及 Fedora 镜像构建，仍待实机验收，EL2 已禁用。参见 [迁移记录与检查项](migration.md)。
+**迁移草案，尚不可发布。** 内核源码在独立下游仓库 [gaokun3/linux](https://github.com/gaokun3/linux) 维护，本仓库为 [186526/linux-gaokun-buildbot](https://github.com/186526/linux-gaokun-buildbot)；Iris/Himax/EC 候选已通过完整内核编译、DEB/RPM 打包及 Fedora 镜像构建，仍待实机验收。参见 [迁移记录与检查项](migration.md)。
 
 `build.env` 固定内核 SHA 与发行版版本；`./build.sh kernel|debs|rpms` 是本地入口，镜像组装暂仍由 CI 执行。
+
+### 默认构建组合
+
+CI 的 `workflow_dispatch` 与可复用 `workflow_call` 默认使用经审阅的默认组合：
+
+```text
+kernel_base=xanmod  kernel_tag=7.2.9-xanmod1
+build_el2=true     build_kernelsu=true
+kernel_toolchain=clang   kernel_tune=sc8280xp
+```
+
+`kernel_toolchain=clang` 选择 Clang/LLVM + ThinLTO；`kernel_tune=sc8280xp` 追加 `KCFLAGS=-march=armv8.4-a+crypto -mtune=cortex-x1c`；`build_el2=true`/`build_kernelsu=true` 在标准与 EL2 两个变体中包含 `-gaokun3-el2` 包集与固定版本的 KernelSU。这些仍是输入：改回 `kernel_base=mainline`、`build_el2=false`、`build_kernelsu=false`、`kernel_toolchain=gcc` 或将 `kernel_tune` 留空即可回到原先的便携/标准行为。`build.sh` 与旧脚本不读取 `kernel_tune`，本地需通过环境变量 `KERNEL_TUNE` 传入。`build.env` 未改：仍固定 mainline 检出且不设 `KERNEL_BASE`，因此本地 `./build.sh` 默认仍是固定提交，只有 CI 工作流默认 XanMod。
 
 ## 包含内容
 
@@ -31,7 +43,7 @@
 
 - **Fedora (RPM)**：`kernel-gaokun3`、`kernel-modules-gaokun3`、`kernel-devel-gaokun3`、`linux-firmware-gaokun3`
 - **Ubuntu (DEB)**：`linux-image-gaokun3`、`linux-modules-gaokun3`、`linux-headers-gaokun3`、`linux-firmware-gaokun3`
-- **EL2 暂停构建**：等待独立迁移与验证；请求 EL2 构建会提前报错。
+- **EL2 变体**：`build_el2=true` 时额外构建 `*-gaokun3-el2` 包集（CI 默认开启）。
 - Ubuntu 内核镜像包在安装/升级时运行 `update-initramfs`，进而通过发行版的 `systemd-boot` 钩子刷新 BLS 条目。
 - Fedora 内核 RPM 现自带匹配的 `dracut.conf.d` 片段，并在 `%posttrans` 中运行 `dracut` + `kernel-install add`，因此安装或升级软件包会自动刷新 initramfs 和 BLS 条目。
 - `linux-firmware-gaokun3`（DEB 与 RPM）把仓库自带的 Adreno 固件 `qcom/a660_gmu.bin`、`qcom/a660_sqe.fw` 安装到 `updates/qcom/`。内核固件加载器先搜索 `updates/` 再搜索 `/lib/firmware`，因此仓库副本优先生效，又不与发行版的 `firmware-qcom-soc` / `linux-firmware-qualcomm-graphics` / `qcom-firmware` 争抢路径。这是显示正常所必需的：`msm` 在点亮面板前加载 `qcom/a660_sqe.fw`，缺失时会报 `msm_dpu ... failed to load qcom/a660_sqe.fw` 并导致花屏。
@@ -49,7 +61,7 @@
 - `patches/others/*`（`0007`–`0012`）：SC8280XP 显示时钟 parking 与 rate-parent 修复、`spi-qcom-geni` 的强制 GSI 模式属性、fbdev 屏幕缓冲区虚拟化、DPU DSC 接口数据宽度，以及 `himax-hx83121a` 面板方向上报。
 - `patches/media/*`（`0001`、`0004`、`0005`、`0007`）：SC8280XP Venus 资源结构，改编自 [jhovold/linux](https://github.com/jhovold/linux/commits/wip/sc8280xp-6.16) 的 Venus 系列。
 - `patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch`：导入本仓库的 DTS 文件与 `gaokun3_defconfig`。该补丁自包含，是 `dts/` 与 `defconfig/` 的权威副本。
-- `patches/el2/*`（`0006`、`0011`）：detached remoteproc 重启，以及 Qualcomm SCM 共享内存桥 VMID 绑定。改编自 [TravMurav/linux](https://github.com/TravMurav/linux/tree/x13s-6.18-v1.1-cxsd)，当前暂停。
+- `patches/el2/*`（`0006`、`0011`）：detached remoteproc 重启，以及 Qualcomm SCM 共享内存桥 VMID 绑定。改编自 [TravMurav/linux](https://github.com/TravMurav/linux/tree/x13s-6.18-v1.1-cxsd)；`build_el2=true` 时应用（CI 默认开启）。
 - `patches/xanmod/*`：当以 [XanMod](https://gitlab.com/xanmod/linux) 内核作为基础（`kernel_base=xanmod`）时的本地覆盖。同名文件会替换共享补丁（例如 `patches/xanmod/0099-...`）；无共享对应项的文件（`patches/xanmod/upstream/0018-...`、`patches/xanmod/others/0018-...`、`patches/xanmod/media/0006-...`、`patches/xanmod/el2/0009,0010,0016-...`）仅在该基础下应用。`git apply --reverse --check` 成功即视为已存在于基线，会自动跳过。
 - **[可选]** `patches/kernelsu/PINNED_REVISION.md`：记录固定的上游 KernelSU 版本。KernelSU 不内联；当 `BUILD_KERNELSU=true` 时，构建会克隆 `https://github.com/tiann/KernelSU.git` 的 `v3.3.0`（`932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e`）并在配置前接入内核树，因此标准与 EL2 两个变体都会包含 KernelSU。
 
