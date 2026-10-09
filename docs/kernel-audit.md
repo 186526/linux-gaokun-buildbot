@@ -59,8 +59,8 @@ right main 的传输/生命周期改动包括 `0bbd872`（burst 模式）、`acc
 ### 相机（仅 XanMod 镜像）
 
 - 根因：`dts/sc8280xp-huawei-gaokun3-camera.dtsi` 的后摄节点写成 `samsung,s5k3l6xx`@0x10，而 7.2.9 没有该驱动。`camss.c` 枚举 endpoint 时不检查可用性，而 v4l2-async 只有在 `waiting_list` 为空时才完成，因此一个无法绑定的传感器会让整个 notifier 永不完成，前摄的 subdev 也一并消失。2023 款实机的后摄模块是 OV13B10@0x36，不是 s5k3l6xx。
-- 采用：后摄 DTS 改为 OV13B10 板级接线并保留隐私 LED；`camcc-sc8280xp.c` 的 `camnoc_axi`/`slow_ahb`/`fast_ahb` 三个时钟源改用 `clk_rcg2_shared_ops`；`ov13b10.c` 增加 OF 匹配与 `get_selection`，电源序列用 `of_machine_is_compatible("huawei,gaokun3")` 按板级限定。改动为 `patches/others/0016-clk-qcom-camcc-sc8280xp-...` 与 `0017-media-i2c-ov13b10-...`（在 0099 之前应用），DTS 只经 `patches/0099` 与 `dts/` 镜像落地，两者字节一致。
-- 验证：实现方自报 `git apply --check` 通过、XanMod 全序列 48 个补丁重放成功、`qcom/sc8280xp-huawei-gaokun3.dtb` 与 `ov13b10.o`/`camcc-sc8280xp.o` 编译零警告、base-aware 相机锚点的 parity 在 xanmod 通过（mainline 不要求）、单测 8/8。独立评审尚未给出结论，落地前这些按自报处理；实机未测。
+- 采用：后摄 DTS 改为 OV13B10 板级接线并保留隐私 LED；`camcc-sc8280xp.c` 的 `camnoc_axi`/`slow_ahb`/`fast_ahb` 三个时钟源改用 `clk_rcg2_shared_ops`；`ov13b10.c` 增加 OF 匹配与 `get_selection`，电源序列用 `of_machine_is_compatible("huawei,gaokun3")` 按整机限定。改动为 `patches/others/0016-clk-qcom-camcc-sc8280xp-...` 与 `0017-media-i2c-ov13b10-...`（在 0099 之前应用），DTS 只经 `patches/0099` 与 `dts/` 镜像落地，两者字节一致。门控按整机 compatible 生效，本机上任何 OV13B10 都会走板级序列；ACPI 机型不受影响。
+- 验证：独立评审复现了完整 XanMod 序列重放（应用 48、跳过 3、失败 0，0016/0017 落在树中）、`olddefconfig` 得到 `CONFIG_VIDEO_OV13B10=m`、两个 0099 中的 camera.dtsi 与 `dts/` 镜像字节一致（330 行，defconfig 同理 508 行）、`qcom/sc8280xp-huawei-gaokun3.dtb` 编译 rc=0 且反编译后 `camera@36` 为 `ovti,ov13b10`（19.2 MHz、560 MHz、4 通道、含隐私 LED、无 s5k3l6）、`ov13b10.o` 与 `camcc-sc8280xp.o` 编译无警告、base-aware parity 在 xanmod 为 8/8（mainline 不要求 G5 锚点）、单测 8/8、`bash -n` 通过。实机未测。
 - 拒绝：0035（camss 容忍未绑定传感器）无锁读取 `waiting_list`，并在运行时拆建 notifier，与 `camss_remove` 竞态，没有上游安全生命周期；0034 的 power_on/power_off 整体改写会改变 ACPI 机型（`ov13b10.c` 中的 OVTIDB10/OVTI13B1/OMNI13B1）原有行为，存在回归风险，故不做板级限定外的改动；0033 是错误传感器。
 - 配置：远端请求要求 7 个符号全部 `=y` 不成立。`CAMSS`、`HI846`、`DW9714`、`I2C_QCOM_CCI` 等已是 `=m`，且各自带 OF `MODULE_DEVICE_TABLE`；Debian 镜像带 udev/kmod，`=m` 即可按需自动加载，Android 之所以要 `=y` 是因为它不加载模块。真正缺失的只有 `CONFIG_VIDEO_OV13B10`（隐私 LED 走 `gpio-leds`，无需额外符号；只有启用 flash 才需 `LEDS_QCOM_FLASH` 及其硬依赖 `LEDS_CLASS_FLASH`）。
 - 暂缓：GDSC 等待值 2/2/0xf 是按同类 SoC 推断、并非实测，作者也要求先用 gdsc-dbg 读数确认；flash LED（0036）列为可选。传感器固件问题本身未解决。
@@ -69,11 +69,11 @@ right main 的传输/生命周期改动包括 `0bbd872`（burst 模式）、`acc
 ### SLPI / EL2 加载恢复
 
 - 现象：SLPI `sensor_process` 崩溃后出现 `bad phdr da 0x88a00000 mem 0x2000` 与 `Failed to load program segments: -22`。
-- 要区分两件事：传感器固件崩溃（内核只负责正确上报）与内核侧的加载恢复缺陷。EL2 下 `qcom,broken-reset` 选用的 ops 表没有 `.load`，恢复流程仍按重启处理，于是回退到通用 ELF 加载器，因段地址落在 carveout 之外而失败；remote 停在 OFFLINE，之后 `sysfs start` 会解引用为空的 `ops->start`（`remoteproc_core.c:1292` 无保护），是潜在的内核崩溃。
-- 处理方式：`patches/el2/0023-remoteproc-reject-booting-and-recovering-non-restartable-remotes.patch` 追加在 0022 之后（不改动 0006/0007/0009/0010/0016 覆盖件，XanMod 解析出 23 个 EL2 条目）。当 `qcom,broken-reset` 选中没有 `.start` 的 ops 表时：`qcom_pas_probe()` 置 `recovery_disabled`；`rproc_trigger_recovery()`、`rproc_boot()` 与 `rproc_start()` 对不可启动的 remote 返回 `-EOPNOTSUPP`（`rproc_start()` 的检查在通用 ELF 加载器和 `ops->start()` 之前，去掉了 `remoteproc_core.c:1292` 的空指针路径）。DETACHED 首次 attach 与可启动的 remote 行为不变。该守卫不恢复 SLPI 的重启能力；`bad phdr` 不再出现只说明不再走那条误导路径，不代表恢复可用。
-- 验证与限制：实现方自报 apply 通过、XanMod 全 23 补丁链在 `90a2d164ae` 上应用成功、`remoteproc_core.o`/`qcom_q6v5_pas.o`/`qcom_q6v5.o` 用 gcc 16.2 编译无警告；**启动后 SLPI 是否仍 attach 未实测**（依据未改动的 DETACHED 路径推断）。独立评审尚未给出结论。pinned/mainline EL2 链在 0023 之前就已失败（0006 在 `remoteproc_core.c:1678`），因此该守卫只保证在 XanMod base 上编译。`sensor_process` 固件崩溃属固件问题、未解决；PAS no-start remote 的 sysfs `recovery` 现读为 `disabled`，是有意行为。
+- 要区分两件事：传感器固件崩溃（内核只负责正确上报）与内核侧的加载恢复缺陷。EL2 下 `qcom,broken-reset` 选用的 ops 表没有 `.load`，恢复流程仍按重启处理，于是回退到通用 ELF 加载器，因段地址落在 carveout 之外而失败；remote 停在 OFFLINE，之后 `sysfs start` 会走到 `rproc_start()` 中未加保护的 `ops->start()` 调用，是潜在的内核崩溃。
+- 处理方式：`patches/el2/0023-remoteproc-reject-booting-and-recovering-non-restartable-remotes.patch` 追加在 0022 之后（不改动 0006/0007/0009/0010/0016 覆盖件，XanMod 解析出 23 个 EL2 条目）。当 `qcom,broken-reset` 选中没有 `.start` 的 ops 表时：`qcom_pas_probe()` 置 `recovery_disabled`；`rproc_trigger_recovery()`、`rproc_boot()` 与 `rproc_start()` 对不可启动的 remote 返回 `-EOPNOTSUPP`，因此 `rproc_start()` 中未加保护的 `ops->start()` 调用对这类 remote 不再可达。可启动的 remote 行为不变：带 `ATTACH_ON_RECOVERY` 的 remote 恢复时仍走 attach 路径，重复的 ATTACHED 启动仍正确保留引用计数，DETACHED 首次 attach 不变。该守卫不恢复 SLPI 的重启能力；`bad phdr` 不再出现只说明不再走那条误导路径，不代表恢复可用。
+- 验证与限制：独立评审在真实当前 base `bca689d382` 上重放了覆盖件选择的 0001–0022 加 0023（含与相机改动合并的 prep），`remoteproc_core.o`/`qcom_q6v5_pas.o`/`qcom_q6v5.o` 用 gcc 16.2 编译 rc=0 无警告；分支解析出 23 个 EL2 条目、0023 居末。树内唯一没有 `.start` 的 ops 表是 `qcom_pas_ops_no_reset`，唯一使用 `ATTACH_ON_RECOVERY` 的 imx 仍有 `.start`，故通用守卫没有其他树内目标。**启动后 SLPI 是否仍 attach 未实测**。pinned/mainline EL2 链在 0023 之前即失败，是作者记录的既有情况，评审无网络、未能独立复现，故不作为独立结论。`sensor_process` 固件崩溃属固件问题、未解决；PAS no-start remote 的 sysfs `recovery` 现读为 `disabled`，是有意行为。
 
-范围与验证：以上是源码/对象层面的核对；实现方自报的 apply、重放与对象编译结果尚待独立评审确认，本记录未包含内核启动或实机结果。相机仍需实机确认（本记录不承诺具体的 subdev 数量），SLPI 崩溃本身在没有触发条件的验证中被排除。
+范围与验证：以上是源码/对象层面的核对，已由独立评审复现（XanMod base 的 apply、重放与对象编译）；本记录未包含内核启动或实机结果。相机仍需实机确认（本记录不承诺具体的 subdev 数量），SLPI 崩溃本身在没有触发条件的验证中被排除。
 
 ## 验证边界
 
