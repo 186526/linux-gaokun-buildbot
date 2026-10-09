@@ -4,7 +4,21 @@ English | [中文](docs/README_zh.md)
 
 Build scripts, tools, and firmware for Linux images targeting the Huawei MateBook E Go 2023 (codename `gaokun3`) based on Qualcomm Snapdragon 8cx Gen3 (`SC8280XP`). The kernel sources, drivers, device trees, and `gaokun3_defconfig` are maintained in the separate downstream kernel repository [`gaokun3/linux`](https://github.com/gaokun3/linux).
 
-The image pipeline now uses `systemd-boot` by default and can optionally build a second EL2 kernel variant with `CONFIG_LOCALVERSION="-gaokun3-el2"`. Builds can also opt into the KernelSU integration with `BUILD_KERNELSU`.
+The image pipeline now uses `systemd-boot` by default and can build a second EL2 kernel variant with `CONFIG_LOCALVERSION="-gaokun3-el2"`. The CI workflows default to that EL2 variant and to the pinned KernelSU integration; `./build.sh` keeps both opt-in through `BUILD_EL2` and `BUILD_KERNELSU`.
+
+### Default build combination
+
+New CI dispatches and reusable `workflow_call` runs default to the reviewed default profile:
+
+```text
+kernel_base=xanmod  kernel_tag=7.2.9-xanmod1
+build_el2=true     build_kernelsu=true
+kernel_toolchain=clang   kernel_tune=sc8280xp
+```
+
+`kernel_toolchain=clang` selects Clang/LLVM with ThinLTO (`LLVM=1 LLVM_IAS=1 LD=ld.lld`, `CONFIG_LTO_CLANG_THIN`); `kernel_tune=sc8280xp` appends `KCFLAGS=-march=armv8.4-a+crypto -mtune=cortex-x1c`, and `build_el2=true`/`build_kernelsu=true` include the `-gaokun3-el2` package set and the pinned KernelSU revision in both variants. Every one of these remains an input: set `kernel_base=mainline`, `build_el2=false`, `build_kernelsu=false`, `kernel_toolchain=gcc`, or an empty `kernel_tune` to fall back to the previous portable/standard behaviour. `kernel_tune` is not honoured by `build.sh` or the legacy helper; pass `KERNEL_TUNE` in the environment there.
+
+The package release tag encodes the combination, so an image workflow only finds a package set built the same way: `gaokun3-debs-7.2.9-xanmod1-xanmod-std-el2-ksu-clang-<ts>` (and the `gaokun3-rpms-...` equivalent). A Clang or EL2/KernelSU suffix the image run does not expect causes the prefix lookup to miss, and a manifest whose `kernel_tag`/`build_el2`/`build_kernelsu` disagrees with the request is rejected.
 
 ### Pinned kernel input
 
@@ -17,6 +31,12 @@ KERNEL_COMMIT=73033564068250603f5b2150c408554faaf22d66
 KERNEL_EL2_COMMIT=
 FEDORA_RELEASE=44
 UBUNTU_RELEASE=26.04
+```
+
+The CI defaults above do not change this file: `build.env` still pins the **mainline** checkout, and it deliberately leaves `KERNEL_BASE` unset so a local `./build.sh` run keeps using the pinned commit. Only the workflows default to XanMod. A local XanMod build therefore has to select the base and the matching naming label explicitly; otherwise `build.env`'s `KERNEL_TAG=gaokun3` would label a XanMod artifact with a tag that does not describe its source:
+
+```bash
+KERNEL_BASE=xanmod KERNEL_TAG=7.2.9-xanmod1 KERNEL_TOOLCHAIN=clang KERNEL_TUNE=sc8280xp BUILD_EL2=true BUILD_KERNELSU=true ./build.sh debs
 ```
 
 `scripts/lib/kernel_source.sh` clones exactly that commit (`git fetch --depth=1`, detached HEAD) and refuses to continue when the checkout is at another commit or contains local edits or untracked files. `KERNEL_TAG` is only a naming label; the commit is what is checked out. The pinned Gaokun3 tree already contains device drivers, DTS files, and `gaokun3_defconfig`, so the build does not replay the legacy device patch series on it. `KERNEL_BASE=xanmod` selects the separate XanMod tree at `KERNEL_XANMOD_TAG` (default `7.2.9-xanmod1`) and applies the repository patch series with XanMod overrides. EL2 is patch-based; `KERNEL_EL2_COMMIT` remains empty and is not required for `BUILD_EL2=true`.

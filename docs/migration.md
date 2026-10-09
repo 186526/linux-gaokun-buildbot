@@ -31,7 +31,7 @@
 - `mainline`（默认）：按 `build.env` 固定的 `KERNEL_COMMIT` 检出（`scripts/lib/kernel_source.sh`）。此时 `kernel_tag` 仅是产物命名标签，不用于取源码。
 - `xanmod`：由打包工作流克隆 `https://gitlab.com/xanmod/linux.git` 并检出真实 XanMod tag，tag 由工作流内的 `KERNEL_XANMOD_TAG`（当前 `7.2.9-xanmod1`）给出。`kernel_tag` 必须与该 tag 一致，否则镜像工作流按前缀 `gaokun3-debs-<tag>-xanmod-<profile>-` 查找不到软件包 release。XanMod 树没有 `gaokun3_defconfig`，该文件由 `patches/0099` 生成，因此不对其做预检查。
 
-因此 Debian 镜像工作流的 dispatch 默认即为 `kernel_tag=7.2.9-xanmod1`、`kernel_base=xanmod`；改用 mainline 时需同时改回 `kernel_tag`（例如 `v7.2-rc2`）。
+因此全部镜像工作流与打包工作流的 dispatch 默认均为 `kernel_tag=7.2.9-xanmod1`、`kernel_base=xanmod`、`build_el2=true`、`build_kernelsu=true`、`kernel_toolchain=clang`、`kernel_tune=sc8280xp`；改用 mainline 时需同时改回 `kernel_tag`（例如 `v7.2-rc2`）并把 `build_el2`、`build_kernelsu`、`kernel_toolchain`、`kernel_tune` 按需关掉或改回 `gcc`、留空。
 
 ## 本地构建
 
@@ -84,7 +84,7 @@ gh workflow run fedora-gaokun3-release.yml --repo 186526/linux-gaokun-buildbot \
   -f package_run_id=PACKAGE_CI_RUN_ID -f publish_release=false
 ```
 
-Fedora 与 Ubuntu 镜像工作流的 `Load reviewed build inputs` 步骤仍在 `KERNEL_EL2_COMMIT` 为空时拒绝 `build_el2=true`；该判定尚未随补丁式 EL2 更新，因此这两个工作流目前不能请求 EL2。Debian 工作流没有该判定。
+Fedora 与 Ubuntu 镜像工作流的 `Load reviewed build inputs` 步骤原在 `KERNEL_EL2_COMMIT` 为空时拒绝 `build_el2=true`；该判定已随补丁式 EL2 移除，两个工作流现在可以请求 EL2（Debian 工作流此前没有该判定）。镜像工作流只核对 manifest 的 `kernel_tag`、`build_el2`、`build_kernelsu`；`kernel_commit` 与 `build.env` 的核对仅在 `kernel_base=mainline` 时执行，因为 XanMod 构建记录的是从 `KERNEL_XANMOD_TAG` 解析出的提交。
 
 Debian Trixie 镜像配合 XanMod、EL2 与 KernelSU 时，先发布对应的软件包 release，再构建镜像（镜像按 release 前缀查找软件包）：
 
