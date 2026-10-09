@@ -1,0 +1,217 @@
+From 06cb6bc6278f43abf43ea309b81f3a20c7b9b31a Mon Sep 17 00:00:00 2001
+From: worker-camera-enable-b080 <worker-camera-enable-b080@tower.invalid>
+Date: Sat, 10 Oct 2026 00:15:02 +0800
+Subject: [PATCH] media: i2c: ov13b10: add OF match, get_selection and
+ board-scoped gaokun3 power
+
+The Huawei MateBook E Go (gaokun3) carries the OV13B10 on the CCI bus at 0x36
+but binds it from device tree, and the driver only had an ACPI match table. Add
+the "ovti,ov13b10" OF compatible and get_selection (NATIVE_SIZE / CROP_BOUNDS /
+CROP_DEFAULT / CROP) so libcamera gets a proper active area instead of assuming
+the mode size and warning.
+
+The board wires the sensor's AVDD to LDO2_B, which it shares with the display
+panel's VDDI (a 1.8V vote). Its own power table raises LDO2_B to 2.8V while the
+rear sensor is in use and relies on RPMh taking the maximum vote, and it orders
+the sequence as reset asserted -> rails -> 1ms -> reset released -> 10ms ->
+MCLK. That sequence and the 2.8V request are board-specific, so gate them on
+of_machine_is_compatible("huawei,gaokun3"); the ACPI users (OVTIDB10/OVTI13B1/
+OMNI13B1, e.g. the ASUS ROG Flow Z13) keep the generic sequence unchanged.
+
+The full-array size used by get_selection is an assumption, not a datasheet
+value. The 2/2/0xf GDSC wait values are intentionally not included here.
+---
+ drivers/media/i2c/ov13b10.c | 115 +++++++++++++++++++++++++++++++++++-
+ 1 file changed, 112 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/i2c/ov13b10.c b/drivers/media/i2c/ov13b10.c
+index b0d3414..bc2d60d 100644
+--- a/drivers/media/i2c/ov13b10.c
++++ b/drivers/media/i2c/ov13b10.c
+@@ -7,6 +7,7 @@
+ #include <linux/gpio/consumer.h>
+ #include <linux/i2c.h>
+ #include <linux/module.h>
++#include <linux/of.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/regulator/consumer.h>
+ #include <media/v4l2-ctrls.h>
+@@ -1190,11 +1191,26 @@ static int ov13b10_identify_module(struct ov13b10 *ov13b)
+ 		return -EIO;
+ 	}
+ 
++	dev_info(ov13b->dev, "chip id 0x%06x identified\n", val);
++
+ 	ov13b->identified = true;
+ 
+ 	return 0;
+ }
+ 
++/*
++ * The Huawei MateBook E Go (gaokun3) wires the rear sensor's AVDD to LDO2_B,
++ * which is shared with the display panel's VDDI (a 1.8V vote). The board's own
++ * power table raises it to 2.8V while the rear sensor is in use, and RPMh takes
++ * the maximum of the votes, so the driver has to request 2.8V and hand the rail
++ * back to 1.8V on power off. The three ACPI IDs (OVTIDB10/OVTI13B1/OMNI13B1,
++ * e.g. the ASUS ROG Flow Z13) are not affected: they keep the generic sequence.
++ */
++static bool ov13b10_is_gaokun3(struct device *dev)
++{
++	return of_machine_is_compatible("huawei,gaokun3");
++}
++
+ static int ov13b10_power_off(struct device *dev)
+ {
+ 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
+@@ -1206,6 +1222,14 @@ static int ov13b10_power_off(struct device *dev)
+ 
+ 	clk_disable_unprepare(ov13b10->img_clk);
+ 
++	/*
++	 * gaokun3: AVDD (LDO2_B) is shared with the panel's VDDI, which votes
++	 * 1.8V. Hand our 2.8V request back so the rail returns to 1.8V.
++	 */
++	if (ov13b10_is_gaokun3(dev))
++		regulator_set_voltage(ov13b10->supplies[1].consumer,
++				      1800000, 2800000);
++
+ 	return 0;
+ }
+ 
+@@ -1215,20 +1239,62 @@ static int ov13b10_power_on(struct device *dev)
+ 	struct ov13b10 *ov13b10 = to_ov13b10(sd);
+ 	int ret;
+ 
+-	ret = clk_prepare_enable(ov13b10->img_clk);
++	if (!ov13b10_is_gaokun3(dev)) {
++		ret = clk_prepare_enable(ov13b10->img_clk);
++		if (ret < 0) {
++			dev_err(dev, "failed to enable imaging clock: %d", ret);
++			return ret;
++		}
++		ret = regulator_bulk_enable(ARRAY_SIZE(ov13b10_supply_names),
++					    ov13b10->supplies);
++		if (ret < 0) {
++			dev_err(dev, "failed to enable regulators\n");
++			clk_disable_unprepare(ov13b10->img_clk);
++			return ret;
++		}
++
++		gpiod_set_value_cansleep(ov13b10->reset, 0);
++		/* 5ms to wait ready after XSHUTDN assert */
++		usleep_range(5000, 5500);
++
++		return 0;
++	}
++
++	/*
++	 * gaokun3 (Huawei MateBook E Go): follow the board's own power table
++	 * (Windows CAMS_RES_QRD.bin): reset asserted -> rails -> 1ms -> reset
++	 * released -> 10ms -> MCLK. AVDD is LDO2_B, shared with the panel's
++	 * VDDI (1.8V vote); the board raises it to 2.8V for the sensor and
++	 * RPMh takes the max, so request 2.8V here.
++	 */
++	gpiod_set_value_cansleep(ov13b10->reset, 1);
++
++	ret = regulator_set_voltage(ov13b10->supplies[1].consumer,
++				    2800000, 2800000);
+ 	if (ret < 0) {
+-		dev_err(dev, "failed to enable imaging clock: %d", ret);
++		dev_err(dev, "avdd: cannot request 2.8V: %d\n", ret);
+ 		return ret;
+ 	}
++
+ 	ret = regulator_bulk_enable(ARRAY_SIZE(ov13b10_supply_names),
+ 				    ov13b10->supplies);
+ 	if (ret < 0) {
+ 		dev_err(dev, "failed to enable regulators\n");
+-		clk_disable_unprepare(ov13b10->img_clk);
+ 		return ret;
+ 	}
+ 
++	usleep_range(1000, 1500);
+ 	gpiod_set_value_cansleep(ov13b10->reset, 0);
++	usleep_range(10000, 11000);
++
++	ret = clk_prepare_enable(ov13b10->img_clk);
++	if (ret < 0) {
++		dev_err(dev, "failed to enable imaging clock: %d", ret);
++		regulator_bulk_disable(ARRAY_SIZE(ov13b10_supply_names),
++				       ov13b10->supplies);
++		return ret;
++	}
++
+ 	/* 5ms to wait ready after XSHUTDN assert */
+ 	usleep_range(5000, 5500);
+ 
+@@ -1334,12 +1400,48 @@ static int ov13b10_resume(struct device *dev)
+ 	return ov13b10_power_on(dev);
+ }
+ 
++/*
++ * libcamera asks for NATIVE_SIZE / CROP_BOUNDS / CROP_DEFAULT / CROP; without
++ * them it treats the active area as the mode size and warns. The driver's own
++ * mode table tops out at 4208x3120, so report that as the array and centre the
++ * narrower modes inside it. The true array with dummy pixels is neither in the
++ * driver nor read from a datasheet here, so this bound follows the exposed
++ * modes rather than an unverified larger size.
++ */
++static int ov13b10_get_selection(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *sd_state,
++				 struct v4l2_subdev_selection *sel)
++{
++	struct ov13b10 *ov13b = to_ov13b10(sd);
++	const struct ov13b10_mode *mode = ov13b->cur_mode;
++
++	switch (sel->target) {
++	case V4L2_SEL_TGT_NATIVE_SIZE:
++	case V4L2_SEL_TGT_CROP_BOUNDS:
++	case V4L2_SEL_TGT_CROP_DEFAULT:
++		sel->r.left = 0;
++		sel->r.top = 0;
++		sel->r.width = 4208;
++		sel->r.height = 3120;
++		return 0;
++	case V4L2_SEL_TGT_CROP:
++		sel->r.left = (4208 - mode->width) / 2;
++		sel->r.top = (3120 - mode->height) / 2;
++		sel->r.width = mode->width;
++		sel->r.height = mode->height;
++		return 0;
++	}
++
++	return -EINVAL;
++}
++
+ static const struct v4l2_subdev_video_ops ov13b10_video_ops = {
+ 	.s_stream = ov13b10_set_stream,
+ };
+ 
+ static const struct v4l2_subdev_pad_ops ov13b10_pad_ops = {
+ 	.enum_mbus_code = ov13b10_enum_mbus_code,
++	.get_selection = ov13b10_get_selection,
+ 	.get_fmt = ov13b10_get_pad_format,
+ 	.set_fmt = ov13b10_set_pad_format,
+ 	.enum_frame_size = ov13b10_enum_frame_size,
+@@ -1705,11 +1807,18 @@ static const struct acpi_device_id ov13b10_acpi_ids[] = {
+ MODULE_DEVICE_TABLE(acpi, ov13b10_acpi_ids);
+ #endif
+ 
++static const struct of_device_id ov13b10_of_ids[] = {
++	{ .compatible = "ovti,ov13b10" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, ov13b10_of_ids);
++
+ static struct i2c_driver ov13b10_i2c_driver = {
+ 	.driver = {
+ 		.name = "ov13b10",
+ 		.pm = pm_ptr(&ov13b10_pm_ops),
+ 		.acpi_match_table = ACPI_PTR(ov13b10_acpi_ids),
++		.of_match_table = ov13b10_of_ids,
+ 	},
+ 	.probe = ov13b10_probe,
+ 	.remove = ov13b10_remove,
+-- 
+2.55.0
+

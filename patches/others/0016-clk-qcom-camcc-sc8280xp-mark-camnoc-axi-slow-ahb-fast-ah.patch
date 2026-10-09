@@ -1,0 +1,62 @@
+From b72828047862ea089cf0941c4e95b1962e580365 Mon Sep 17 00:00:00 2001
+From: worker-camera-enable-b080 <worker-camera-enable-b080@tower.invalid>
+Date: Sat, 10 Oct 2026 00:13:44 +0800
+Subject: [PATCH] clk: qcom: camcc-sc8280xp: park camnoc_axi/slow_ahb/fast_ahb
+ on XO when unused
+
+camcc has 43 RCGs; 21 of them already use clk_rcg2_shared_ops, but the three
+sources that stay alive across a camera power collapse - camnoc_axi_clk_src,
+slow_ahb_clk_src (the parent of cpas_ahb) and fast_ahb_clk_src - still use the
+plain clk_rcg2_ops, which has no disable callback. After camss turns its branch
+clocks off, camnoc_axi_clk_src keeps pointing at a CAMCC PLL that has itself
+been turned off, so the GDSC power-collapse handshake to CAMNOC has no running
+clock.
+
+clk_rcg2_shared_disable() parks the RCG back onto its safe source (index 0,
+P_BI_TCXO) on the last disable, and clk_rcg2_shared_init() parks it at probe
+time as well. Same selection as camcc-x1e80100.c, which marks camnoc_axi_rt,
+slow_ahb, fast_ahb and csid as shared and leaves cci/cphy_rx/csiXphytimer/mclk
+on the plain ops; camcc-sm8150.c and camcc-sc8180x.c mark all of their RCGs
+shared.
+
+Do not fold in the 2/2/0xf GDSC wait values: they are asserted from sibling
+drivers, not read back from this part, so they need a gdsc register readout
+before they can be adopted.
+---
+ drivers/clk/qcom/camcc-sc8280xp.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/clk/qcom/camcc-sc8280xp.c b/drivers/clk/qcom/camcc-sc8280xp.c
+index 660d865..5b8dce9 100644
+--- a/drivers/clk/qcom/camcc-sc8280xp.c
++++ b/drivers/clk/qcom/camcc-sc8280xp.c
+@@ -667,7 +667,7 @@ static struct clk_rcg2 camcc_camnoc_axi_clk_src = {
+ 		.name = "camcc_camnoc_axi_clk_src",
+ 		.parent_data = camcc_parent_data_2,
+ 		.num_parents = ARRAY_SIZE(camcc_parent_data_2),
+-		.ops = &clk_rcg2_ops,
++		.ops = &clk_rcg2_shared_ops,
+ 	},
+ };
+ 
+@@ -835,7 +835,7 @@ static struct clk_rcg2 camcc_fast_ahb_clk_src = {
+ 		.name = "camcc_fast_ahb_clk_src",
+ 		.parent_data = camcc_parent_data_0,
+ 		.num_parents = ARRAY_SIZE(camcc_parent_data_0),
+-		.ops = &clk_rcg2_ops,
++		.ops = &clk_rcg2_shared_ops,
+ 	},
+ };
+ 
+@@ -1370,7 +1370,7 @@ static struct clk_rcg2 camcc_slow_ahb_clk_src = {
+ 		.name = "camcc_slow_ahb_clk_src",
+ 		.parent_data = camcc_parent_data_0,
+ 		.num_parents = ARRAY_SIZE(camcc_parent_data_0),
+-		.ops = &clk_rcg2_ops,
++		.ops = &clk_rcg2_shared_ops,
+ 	},
+ };
+ 
+-- 
+2.55.0
+
