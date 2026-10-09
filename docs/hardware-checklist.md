@@ -33,8 +33,14 @@ Fedora 应使用 `fedora` token，Ubuntu 应使用 `ubuntu` token（Debian 用 m
 | 挂起 | 确认进入并退出 s2idle；记录唤醒方式及异常 | 未测 |
 | Iris 解码 | 对已知格式/分辨率的视频运行实际 V4L2 解码，保留程序和内核日志 | 未测 |
 | Iris 编码 | 单独检查暴露的能力并测试；不能由解码成功推断编码可用 | 未测 |
+| 相机 | 仅 XanMod 镜像；前后摄分别取流，记录 `media-ctl` 拓扑与 `dmesg` 中的 chip id | 未测 |
+| SLPI / EL2 | 仅 EL2 镜像；崩溃后确认不再出现 `bad phdr`，并确认 remote 状态与是否仍可 start | 未测 |
 | 升级与回退 | 安装下一候选后，从启动菜单分别进入新旧内核 | 未测 |
 
 Iris 节点出现、固件加载或 `/dev/video*` 存在，都不足以证明实际编解码工作正常。camera、EL2 另行测试，不计入普通候选已验证功能。
+
+相机修复只在 XanMod 镜像中（经 `patches/0099` 与 `dts/` 镜像落地），pinned/mainline 镜像不含该修复。后摄由错误的 `samsung,s5k3l6xx` 改为 OV13B10 后，源码层面的应用、重放、DT 与对象编译已由独立评审复现；仍需实机确认前后摄都能取流：传感器绑定成功不等于整个 CAMSS 管线可用，也不预设具体的 subdev 数量。`media-ctl` 与 `dmesg` 的 chip id 是判定依据。
+
+SLPI 的 `sensor_process` 崩溃属于固件问题，内核侧加入了加载恢复守卫（`patches/el2/0023`，仅在 XanMod base 编译），且该守卫不恢复重启能力。EL2 下崩溃后 `bad phdr` 不再出现只说明不再走误导路径；启动后 SLPI 是否仍 attach 尚未实测，必须另行确认 remote 的最终状态与 start 是否被正确拒绝。
 
 若出现问题，记录失败步骤、此前可用的内核 SHA 和对应 `kernel-boot.log`。由维护者判断是否发布，并为通过验收的源码建立不可变 tag；CI 不自动修改下游提交栈。
