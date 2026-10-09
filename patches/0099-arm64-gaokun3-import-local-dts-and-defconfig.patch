@@ -439,7 +439,7 @@ index f3c00be67081..d679b92b72b4 100644
  	};
  
  	vreg_misc_3p3: regulator-misc-3p3 {
-@@ -158,6 +207,11 @@ vreg_wlan: regulator-wlan {
+@@ -158,9 +207,22 @@ vreg_wlan: regulator-wlan {
  	};
  
  	reserved-memory {
@@ -451,7 +451,18 @@ index f3c00be67081..d679b92b72b4 100644
  		linux,cma {
  			compatible = "shared-dma-pool";
  			size = <0x0 0x8000000>;
-@@ -356,8 +410,8 @@ vreg_l1b: ldo1 {
++			/*
++			 * Keep the default CMA pool below 4 GiB: without this it is
++			 * allocated top-down at 0x878000000, where devices with a
++			 * 32-bit coherent mask (ath11k/MHI) cannot use it and fall
++			 * back to high-order ZONE_DMA buddy allocations on every
++			 * resume.
++			 */
++			alloc-ranges = <0x0 0x80000000 0x0 0x80000000>;
+ 			reusable;
+ 			linux,cma-default;
+ 		};
+@@ -356,8 +418,8 @@ vreg_l1b: ldo1 {
  
  		vreg_l2b: ldo2 {
  			regulator-name = "vreg_l2b";
@@ -462,7 +473,7 @@ index f3c00be67081..d679b92b72b4 100644
  			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
  		};
  
-@@ -367,9 +421,10 @@ vreg_l3b: ldo3 {
+@@ -367,9 +429,10 @@ vreg_l3b: ldo3 {
  			regulator-max-microvolt = <1200000>;
  			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
  			regulator-boot-on;
@@ -476,7 +487,7 @@ index f3c00be67081..d679b92b72b4 100644
  		};
  
  		vreg_l4b: ldo4 {
-@@ -377,16 +432,10 @@ vreg_l4b: ldo4 {
+@@ -377,16 +440,10 @@ vreg_l4b: ldo4 {
  			regulator-min-microvolt = <912000>;
  			regulator-max-microvolt = <912000>;
  			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
@@ -497,7 +508,7 @@ index f3c00be67081..d679b92b72b4 100644
  		};
  
  		vreg_l6b: ldo6 {
-@@ -399,21 +448,6 @@ vreg_l6b: ldo6 {
+@@ -399,21 +456,6 @@ vreg_l6b: ldo6 {
  			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
  						   RPMH_REGULATOR_MODE_HPM>;
  		};
@@ -519,7 +530,7 @@ index f3c00be67081..d679b92b72b4 100644
  	};
  
  	regulators-1 {
-@@ -435,6 +469,8 @@ vreg_s1c: smps1 {
+@@ -435,6 +477,8 @@ vreg_s1c: smps1 {
  			regulator-always-on;
  		};
  
@@ -528,7 +539,7 @@ index f3c00be67081..d679b92b72b4 100644
  		vreg_l1c: ldo1 {
  			regulator-name = "vreg_l1c";
  			regulator-min-microvolt = <1800000>;
-@@ -444,13 +480,7 @@ vreg_l1c: ldo1 {
+@@ -444,13 +488,7 @@ vreg_l1c: ldo1 {
  			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
  						   RPMH_REGULATOR_MODE_HPM>;
  		};
@@ -543,7 +554,7 @@ index f3c00be67081..d679b92b72b4 100644
  
  		vreg_l8c: ldo8 {
  			regulator-name = "vreg_l8c";
-@@ -498,6 +528,7 @@ regulators-2 {
+@@ -498,6 +536,7 @@ regulators-2 {
  		vdd-l6-l9-l10-supply = <&vreg_s12b>;
  		vdd-l8-supply = <&vreg_s12b>;
  
@@ -551,7 +562,7 @@ index f3c00be67081..d679b92b72b4 100644
  		vreg_l2d: ldo2 {
  			regulator-name = "vreg_l2d";
  			regulator-min-microvolt = <3072000>;
-@@ -508,21 +539,15 @@ vreg_l2d: ldo2 {
+@@ -508,21 +547,15 @@ vreg_l2d: ldo2 {
  						   RPMH_REGULATOR_MODE_HPM>;
  		};
  
@@ -577,7 +588,7 @@ index f3c00be67081..d679b92b72b4 100644
  		};
  
  		vreg_l6d: ldo6 {
-@@ -560,11 +585,12 @@ vreg_l9d: ldo9 {
+@@ -560,11 +593,12 @@ vreg_l9d: ldo9 {
  			regulator-min-microvolt = <912000>;
  			regulator-max-microvolt = <912000>;
  			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
@@ -594,7 +605,7 @@ index f3c00be67081..d679b92b72b4 100644
  		vreg_l10d: ldo10 {
  			regulator-name = "vreg_l10d";
  			regulator-min-microvolt = <912000>;
-@@ -574,7 +600,11 @@ vreg_l10d: ldo10 {
+@@ -574,7 +608,11 @@ vreg_l10d: ldo10 {
  			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
  						   RPMH_REGULATOR_MODE_HPM>;
  		};
@@ -606,7 +617,7 @@ index f3c00be67081..d679b92b72b4 100644
  };
  
  &dispcc0 {
-@@ -595,34 +625,58 @@ &gpi_dma2 {
+@@ -595,34 +633,58 @@ &gpi_dma2 {
  
  &gpu {
  	status = "okay";
@@ -676,7 +687,7 @@ index f3c00be67081..d679b92b72b4 100644
  };
  
  &i2c15 {
-@@ -637,7 +691,15 @@ embedded-controller@38 {
+@@ -637,7 +699,15 @@ embedded-controller@38 {
  		compatible = "huawei,gaokun3-ec";
  		reg = <0x38>;
  
@@ -693,7 +704,7 @@ index f3c00be67081..d679b92b72b4 100644
  
  		#address-cells = <1>;
  		#size-cells = <0>;
-@@ -647,7 +709,6 @@ connector@0 {
+@@ -647,7 +717,6 @@ connector@0 {
  			reg = <0>;
  			power-role = "dual";
  			data-role = "dual";
@@ -701,7 +712,7 @@ index f3c00be67081..d679b92b72b4 100644
  			ports {
  				#address-cells = <1>;
  				#size-cells = <0>;
-@@ -655,7 +716,7 @@ ports {
+@@ -655,7 +724,7 @@ ports {
  				port@0 {
  					reg = <0>;
  
@@ -710,7 +721,7 @@ index f3c00be67081..d679b92b72b4 100644
  						remote-endpoint = <&usb_0_dwc3_hs>;
  					};
  				};
-@@ -663,7 +724,7 @@ ucsi0_hs_in: endpoint {
+@@ -663,7 +732,7 @@ ucsi0_hs_in: endpoint {
  				port@1 {
  					reg = <1>;
  
@@ -719,7 +730,7 @@ index f3c00be67081..d679b92b72b4 100644
  						remote-endpoint = <&usb_0_qmpphy_out>;
  					};
  				};
-@@ -725,7 +786,8 @@ &mdss0_dp0 {
+@@ -725,7 +794,8 @@ &mdss0_dp0 {
  };
  
  &mdss0_dp0_out {
@@ -729,7 +740,7 @@ index f3c00be67081..d679b92b72b4 100644
  	remote-endpoint = <&usb_0_qmpphy_dp_in>;
  };
  
-@@ -734,10 +796,95 @@ &mdss0_dp1 {
+@@ -734,10 +804,95 @@ &mdss0_dp1 {
  };
  
  &mdss0_dp1_out {
@@ -826,7 +837,7 @@ index f3c00be67081..d679b92b72b4 100644
  &pcie2a {
  	perst-gpios = <&tlmm 143 GPIO_ACTIVE_LOW>;
  	wake-gpios = <&tlmm 145 GPIO_ACTIVE_LOW>;
-@@ -785,6 +929,9 @@ wifi@0 {
+@@ -785,6 +937,9 @@ wifi@0 {
  		vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
  		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
  		vddrfa1p8-supply = <&vreg_pmu_rfa_1p7>;
@@ -836,7 +847,7 @@ index f3c00be67081..d679b92b72b4 100644
  	};
  };
  
-@@ -969,13 +1116,18 @@ &remoteproc_nsp0 {
+@@ -969,13 +1124,18 @@ &remoteproc_nsp0 {
  	status = "okay";
  };
  
@@ -856,7 +867,7 @@ index f3c00be67081..d679b92b72b4 100644
  	audio-routing = "SpkrLeft IN", "WSA_SPK1 OUT",
  			"SpkrRight IN", "WSA_SPK2 OUT",
  			"IN1_HPHL", "HPHL_OUT",
-@@ -1125,6 +1277,8 @@ bluetooth {
+@@ -1125,6 +1285,8 @@ bluetooth {
  		vddrfa1p7-supply = <&vreg_pmu_rfa_1p7>;
  
  		max-speed = <3200000>;
@@ -865,7 +876,7 @@ index f3c00be67081..d679b92b72b4 100644
  	};
  };
  
-@@ -1141,7 +1295,7 @@ &usb_0_dwc3_hs {
+@@ -1141,7 +1303,7 @@ &usb_0_dwc3_hs {
  };
  
  &usb_0_hsphy {
@@ -874,7 +885,7 @@ index f3c00be67081..d679b92b72b4 100644
  	vdda18-supply = <&vreg_l1c>;
  	vdda33-supply = <&vreg_l7d>;
  
-@@ -1149,9 +1303,10 @@ &usb_0_hsphy {
+@@ -1149,9 +1311,10 @@ &usb_0_hsphy {
  };
  
  &usb_0_qmpphy {
@@ -887,7 +898,7 @@ index f3c00be67081..d679b92b72b4 100644
  	orientation-switch;
  
  	status = "okay";
-@@ -1178,7 +1333,7 @@ &usb_1_dwc3_hs {
+@@ -1178,7 +1341,7 @@ &usb_1_dwc3_hs {
  };
  
  &usb_1_hsphy {
@@ -896,7 +907,7 @@ index f3c00be67081..d679b92b72b4 100644
  	vdda18-supply = <&vreg_l1c>;
  	vdda33-supply = <&vreg_l13c>;
  
-@@ -1186,9 +1341,10 @@ &usb_1_hsphy {
+@@ -1186,9 +1349,10 @@ &usb_1_hsphy {
  };
  
  &usb_1_qmpphy {
@@ -909,7 +920,7 @@ index f3c00be67081..d679b92b72b4 100644
  	orientation-switch;
  
  	status = "okay";
-@@ -1207,7 +1363,7 @@ &usb_2 {
+@@ -1207,7 +1371,7 @@ &usb_2 {
  };
  
  &usb_2_hsphy0 {
@@ -918,7 +929,7 @@ index f3c00be67081..d679b92b72b4 100644
  	vdda18-supply = <&vreg_l1c>;
  	vdda33-supply = <&vreg_l7d>;
  
-@@ -1215,7 +1371,7 @@ &usb_2_hsphy0 {
+@@ -1215,7 +1379,7 @@ &usb_2_hsphy0 {
  };
  
  &usb_2_hsphy1 {
@@ -927,7 +938,7 @@ index f3c00be67081..d679b92b72b4 100644
  	vdda18-supply = <&vreg_l1c>;
  	vdda33-supply = <&vreg_l7d>;
  
-@@ -1223,7 +1379,7 @@ &usb_2_hsphy1 {
+@@ -1223,7 +1387,7 @@ &usb_2_hsphy1 {
  };
  
  &usb_2_hsphy2 {
@@ -936,7 +947,7 @@ index f3c00be67081..d679b92b72b4 100644
  	vdda18-supply = <&vreg_l8c>;
  	vdda33-supply = <&vreg_l2d>;
  
-@@ -1231,7 +1387,7 @@ &usb_2_hsphy2 {
+@@ -1231,7 +1395,7 @@ &usb_2_hsphy2 {
  };
  
  &usb_2_hsphy3 {
@@ -945,7 +956,7 @@ index f3c00be67081..d679b92b72b4 100644
  	vdda18-supply = <&vreg_l8c>;
  	vdda33-supply = <&vreg_l2d>;
  
-@@ -1239,15 +1395,15 @@ &usb_2_hsphy3 {
+@@ -1239,15 +1403,15 @@ &usb_2_hsphy3 {
  };
  
  &usb_2_qmpphy0 {
@@ -965,7 +976,7 @@ index f3c00be67081..d679b92b72b4 100644
  
  	status = "okay";
  };
-@@ -1263,6 +1419,11 @@ &vamacro {
+@@ -1263,6 +1427,11 @@ &vamacro {
  	status = "okay";
  };
  
@@ -977,7 +988,7 @@ index f3c00be67081..d679b92b72b4 100644
  &wsamacro {
  	status = "okay";
  };
-@@ -1300,8 +1461,28 @@ hastings_reg_en: hastings-reg-en-state {
+@@ -1300,8 +1469,28 @@ hastings_reg_en: hastings-reg-en-state {
  };
  
  &tlmm {
@@ -1007,7 +1018,7 @@ index f3c00be67081..d679b92b72b4 100644
  
  	bt_default: bt-default-state {
  		hstp-bt-en-pins {
-@@ -1318,6 +1499,36 @@ hstp-sw-ctrl-pins {
+@@ -1318,6 +1507,36 @@ hstp-sw-ctrl-pins {
  		};
  	};
  
@@ -1044,7 +1055,7 @@ index f3c00be67081..d679b92b72b4 100644
  	i2c4_default: i2c4-default-state {
  		pins = "gpio171", "gpio172";
  		function = "qup4";
-@@ -1332,6 +1543,13 @@ i2c15_default: i2c15-default-state {
+@@ -1332,6 +1551,13 @@ i2c15_default: i2c15-default-state {
  		bias-pull-up;
  	};
  
@@ -1058,7 +1069,7 @@ index f3c00be67081..d679b92b72b4 100644
  	mode_pin_active: mode-pin-state {
  		pins = "gpio26";
  		function = "gpio";
-@@ -1411,6 +1629,48 @@ perst-n-pins {
+@@ -1411,6 +1637,48 @@ perst-n-pins {
  		};
  	};
  
@@ -1107,7 +1118,7 @@ index f3c00be67081..d679b92b72b4 100644
 +
  		int-n-pins {
  			pins = "gpio175";
-@@ -1424,7 +1684,6 @@ reset-n-pins {
+@@ -1424,7 +1692,6 @@ reset-n-pins {
  			function = "gpio";
  			drive-strength = <2>;
  			bias-disable;
@@ -1115,7 +1126,7 @@ index f3c00be67081..d679b92b72b4 100644
  		};
  	};
  
-@@ -1485,3 +1744,5 @@ wlan_en: wlan-en-state {
+@@ -1485,3 +1752,5 @@ wlan_en: wlan-en-state {
  		bias-pull-down;
  	};
  };
