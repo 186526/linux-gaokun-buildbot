@@ -59,17 +59,17 @@ right main 的传输/生命周期改动包括 `0bbd872`（burst 模式）、`acc
 ### 相机（仅 XanMod 镜像）
 
 - 根因：`dts/sc8280xp-huawei-gaokun3-camera.dtsi` 的后摄节点写成 `samsung,s5k3l6xx`@0x10，而 7.2.9 没有该驱动。`camss.c` 枚举 endpoint 时不检查可用性，而 v4l2-async 只有在 `waiting_list` 为空时才完成，因此一个无法绑定的传感器会让整个 notifier 永不完成，前摄的 subdev 也一并消失。2023 款实机的后摄模块是 OV13B10@0x36，不是 s5k3l6xx。
-- 采用：后摄 DTS 改为 OV13B10 板级接线；`camcc-sc8280xp.c` 的三个时钟源改用 `clk_rcg2_shared_ops`；`ov13b10.c` 增加 OF 匹配与 `get_selection`，电源序列按板级 compatible 限定。这些改动只经 `patches/0099` 与 `dts/` 镜像落地，驱动改动作为 `patches/others/` 条目在 0099 之前应用。
-- 拒绝：0035（camss 容忍未绑定传感器）无锁读取 `waiting_list`，并在运行时拆建 notifier，与 `camss_remove` 竞态，没有上游安全生命周期；0034 的 power_on/power_off 整体改写不是板级限定，会回归 ACPI 机型（`ov13b10.c` 中的 OVTIDB10/OVTI13B1/OMNI13B1）；0033 是错误传感器。
-- 配置：远端请求要求 7 个符号全部 `=y` 不成立。`CAMSS`、`HI846`、`DW9714`、`I2C_QCOM_CCI` 等已是 `=m`，且各自带 OF `MODULE_DEVICE_TABLE`；Debian 镜像带 udev/kmod，`=m` 即可按需自动加载，Android 之所以要 `=y` 是因为它不加载模块。真正缺失的只有 `CONFIG_VIDEO_OV13B10`（可选 flash 还缺 `LEDS_QCOM_FLASH`，其硬依赖 `LEDS_CLASS_FLASH` 须一并加入）。
-- 暂缓：GDSC 等待值 2/2/0xf 是按同类 SoC 推断、并非实测，作者也要求先用 gdsc-dbg 读数确认；flash（0036）与隐私 LED（0074）为可选项。传感器固件问题本身未解决。
+- 采用：后摄 DTS 改为 OV13B10 板级接线并保留隐私 LED；`camcc-sc8280xp.c` 的 `camnoc_axi`/`slow_ahb`/`fast_ahb` 三个时钟源改用 `clk_rcg2_shared_ops`；`ov13b10.c` 增加 OF 匹配与 `get_selection`，电源序列用 `of_machine_is_compatible("huawei,gaokun3")` 按板级限定。这些改动只经 `patches/0099` 与 `dts/` 镜像落地，驱动改动作为 `patches/others/` 条目在 0099 之前应用。
+- 拒绝：0035（camss 容忍未绑定传感器）无锁读取 `waiting_list`，并在运行时拆建 notifier，与 `camss_remove` 竞态，没有上游安全生命周期；0034 的 power_on/power_off 整体改写会改变 ACPI 机型（`ov13b10.c` 中的 OVTIDB10/OVTI13B1/OMNI13B1）原有行为，存在回归风险，故不做板级限定外的改动；0033 是错误传感器。
+- 配置：远端请求要求 7 个符号全部 `=y` 不成立。`CAMSS`、`HI846`、`DW9714`、`I2C_QCOM_CCI` 等已是 `=m`，且各自带 OF `MODULE_DEVICE_TABLE`；Debian 镜像带 udev/kmod，`=m` 即可按需自动加载，Android 之所以要 `=y` 是因为它不加载模块。真正缺失的只有 `CONFIG_VIDEO_OV13B10`（隐私 LED 走 `gpio-leds`，无需额外符号；只有启用 flash 才需 `LEDS_QCOM_FLASH` 及其硬依赖 `LEDS_CLASS_FLASH`）。
+- 暂缓：GDSC 等待值 2/2/0xf 是按同类 SoC 推断、并非实测，作者也要求先用 gdsc-dbg 读数确认；flash LED（0036）列为可选。传感器固件问题本身未解决。
 - 落地边界：`scripts/ci/20_build_kernel_variants.sh` 只在 `KERNEL_BASE=xanmod` 时应用 `patches/upstream`、`patches/others`、`patches/media` 与 `patches/0099`；mainline 路径只检查 `gaokun3_defconfig` 是否存在。pinned `gaokun3/linux@730335640` 同样缺少这些相机改动，所以 mainline-base 镜像不含相机修复，需在 pinned 树另做上游提交（超出本仓库写入范围，待人工决定）。
 
 ### SLPI / EL2 加载恢复
 
 - 现象：SLPI `sensor_process` 崩溃后出现 `bad phdr da 0x88a00000 mem 0x2000` 与 `Failed to load program segments: -22`。
 - 要区分两件事：传感器固件崩溃（内核只负责正确上报）与内核侧的加载恢复缺陷。EL2 下 `qcom,broken-reset` 选用的 ops 表没有 `.load`，恢复流程仍按重启处理，于是回退到通用 ELF 加载器，因段地址落在 carveout 之外而失败；remote 停在 OFFLINE，之后 `sysfs start` 会解引用为空的 `ops->start`（`remoteproc_core.c:1292` 无保护），是潜在的内核崩溃。
-- 处理方向：当 `qcom,broken-reset` 选中没有 `.start` 的 ops 表时，显式禁止恢复，并拒绝在 OFFLINE 且不可启动的 remote 上执行 start，以消除上述空指针路径。该守卫不恢复 SLPI 的重启能力；`bad phdr` 不再出现只说明不再走那条误导路径，不代表恢复可用。具体补丁与验证由 M69 落地，本记录只给出机制与边界。
+- 处理方向：当 `qcom,broken-reset` 选中没有 `.start` 的 ops 表时，显式禁止恢复，并拒绝在 OFFLINE 且不可启动的 remote 上执行 start，以消除上述空指针路径。该守卫不恢复 SLPI 的重启能力；`bad phdr` 不再出现只说明不再走那条误导路径，不代表恢复可用。守卫补丁与逐项验证（apply、EL2 链、受影响对象的编译、启动后 SLPI 仍处于 attach 状态）尚未完成，落地前不得按已验证处理。
 
 范围与验证：以上是源码/对象层面的核对，未包含内核编译或实机结果。相机仍需实机确认（本记录不承诺具体的 subdev 数量），SLPI 崩溃本身在没有触发条件的验证中被排除。
 
