@@ -45,11 +45,7 @@ on:
           while staying on Clang. Rejected with kernel_toolchain=gcc.
         required: false
         default: ""
-        type: choice
-        options:
-          - ""
-          - thin
-          - none
+        type: string
       kernel_tune:
         description: >-
           Target tuning; the SC8280XP profile (sc8280xp / 8cx-gen3 / 8cxgen3)
