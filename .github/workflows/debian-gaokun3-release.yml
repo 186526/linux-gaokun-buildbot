@@ -58,6 +58,15 @@ on:
         options:
           - gcc
           - clang
+      kernel_lto:
+        description: >-
+          Link-time optimization for Clang builds: empty keeps ThinLTO (the
+          clang default), thin selects ThinLTO explicitly, none disables LTO
+          while staying on Clang. Must match the package release; rejected with
+          kernel_toolchain=gcc.
+        required: false
+        default: ""
+        type: string
       kernel_tune:
         description: >-
           Target tuning; the SC8280XP profile (sc8280xp / 8cx-gen3 / 8cxgen3)
@@ -85,6 +94,7 @@ jobs:
       build_el2: ${{ github.event.inputs.build_el2 == 'true' }}
       build_kernelsu: ${{ github.event.inputs.build_kernelsu == 'true' }}
       kernel_toolchain: ${{ github.event.inputs.kernel_toolchain }}
+      kernel_lto: ${{ github.event.inputs.kernel_lto }}
       kernel_tune: ${{ github.event.inputs.kernel_tune }}
     secrets: inherit
 
@@ -102,6 +112,7 @@ jobs:
       BUILD_EL2: ${{ github.event.inputs.build_el2 }}
       BUILD_KERNELSU: ${{ github.event.inputs.build_kernelsu }}
       KERNEL_TOOLCHAIN: ${{ github.event.inputs.kernel_toolchain }}
+      KERNEL_LTO: ${{ github.event.inputs.kernel_lto }}
       KERNEL_TUNE: ${{ github.event.inputs.kernel_tune }}
       IMAGE_SIZE: 12G
       IMAGE_CHUNK_SIZE: 1900M
@@ -147,24 +158,12 @@ jobs:
           else
             echo "package_source=release" >> "$GITHUB_OUTPUT"
 
-            safe_kernel_tag="${KERNEL_TAG//\//-}"
-            safe_kernel_tag="${safe_kernel_tag//[^A-Za-z0-9._-]/-}"
-            base_suffix=""
-            if [[ "${KERNEL_BASE:-xanmod}" == "xanmod" ]]; then
-              base_suffix="-xanmod"
-            fi
-            profile="std"
-            if [[ "$BUILD_EL2" == "true" ]]; then
-              profile="${profile}-el2"
-            fi
-            if [[ "$BUILD_KERNELSU" == "true" ]]; then
-              profile="${profile}-ksu"
-            fi
-            toolchain_suffix=""
-            if [[ "${KERNEL_TOOLCHAIN:-gcc}" == "clang" ]]; then
-              toolchain_suffix="-clang"
-            fi
-            prefix="gaokun3-debs-${safe_kernel_tag}${base_suffix}-${profile}${toolchain_suffix}-"
+            # Derive the lookup prefix with the same helper the package workflow
+            # used to publish the tag, so a Clang+ThinLTO release and a
+            # Clang+LTO-off one never collide.
+            . scripts/ci/lib/package_tag.sh
+            export PACKAGE_KIND=debs
+            prefix="$(package_release_prefix debs)"
 
             releases_json="$WORKDIR/releases.json"
             curl -fsSL \
@@ -296,6 +295,19 @@ jobs:
           manifest_kernel_tag="$(jq -r '.kernel_tag' "$manifest_path")"
           manifest_build_el2="$(jq -r '.build_el2' "$manifest_path")"
           manifest_build_kernelsu="$(jq -r '.build_kernelsu' "$manifest_path")"
+
+          # The manifest records the resolved toolchain and LTO mode. The tag
+          # prefix already separates Clang ThinLTO from Clang with LTO off, but
+          # re-check the manifest so a renamed release cannot slip a mismatched
+          # combination past the lookup.
+          . scripts/ci/lib/package_tag.sh
+          resolve_kernel_toolchain
+          manifest_kernel_toolchain="$(jq -r '.kernel_toolchain' "$manifest_path")"
+          manifest_kernel_lto="$(jq -r '.kernel_lto' "$manifest_path")"
+          if [[ "$manifest_kernel_toolchain" != "$KERNEL_TOOLCHAIN" || "$manifest_kernel_lto" != "$KERNEL_LTO" ]]; then
+            echo "package set ${package_release_tag} toolchain mismatch: expected ${KERNEL_TOOLCHAIN}/${KERNEL_LTO}, got ${manifest_kernel_toolchain}/${manifest_kernel_lto}" >&2
+            exit 1
+          fi
 
           if [[ "$manifest_kernel_tag" != "$KERNEL_TAG" ]]; then
             echo "package kernel tag mismatch: expected ${KERNEL_TAG}, got ${manifest_kernel_tag}" >&2
