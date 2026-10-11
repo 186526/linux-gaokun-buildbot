@@ -17,7 +17,7 @@ jobs:
           bash -n build.sh build.env
           find scripts -name '*.sh' -print0 | xargs -0 -n1 bash -n
       - name: Check new build entry points
-        run: shellcheck -S warning build.sh scripts/lib/kernel_source.sh scripts/ci/20_build_kernel_variants.sh scripts/ci/lib/toolchain.sh scripts/local/build_kernel.sh
+        run: shellcheck -S warning build.sh scripts/lib/kernel_source.sh scripts/ci/20_build_kernel_variants.sh scripts/ci/lib/toolchain.sh scripts/ci/lib/package_tag.sh scripts/local/build_kernel.sh
       - name: Validate the kernel toolchain selection
         run: |
           set -euo pipefail
@@ -72,6 +72,61 @@ jobs:
             exit 1
           fi
           echo "kernel toolchain selection OK"
+      - name: Validate the package release-tag LTO encoding
+        run: |
+          set -euo pipefail
+          # The package release tag has to distinguish Clang ThinLTO from Clang
+          # with LTO off, or an image workflow's prefix lookup could pick up the
+          # wrong package set. GCC keeps the historical shape with no LTO suffix,
+          # and a bare Clang default still resolves to ThinLTO.
+          suffix_case() {
+            local toolchain="$1" lto="$2" want="$3"
+            local out
+            out="$(
+              KERNEL_TOOLCHAIN="$toolchain" KERNEL_LTO="$lto" bash -c '
+                . scripts/ci/lib/package_tag.sh
+                resolve_kernel_toolchain
+                package_lto_suffix
+              '
+            )"
+            [[ "$out" == "$want" ]] || {
+              echo "lto suffix toolchain '$toolchain' lto '$lto': got '$out', want '$want'" >&2
+              exit 1
+            }
+          }
+          # GCC and the Clang ThinLTO default keep the historical tag shapes;
+          # only Clang with LTO off appends a suffix, so an existing `-clang`
+          # release prefix still resolves.
+          suffix_case clang "" ""
+          suffix_case clang thin ""
+          suffix_case clang none "-lto-none"
+          suffix_case gcc "" ""
+          prefix_for() {
+            KERNEL_TOOLCHAIN="$1" KERNEL_LTO="$2" KERNEL_TAG=v7.2 KERNEL_BASE=mainline \
+              BUILD_EL2=false BUILD_KERNELSU=false bash -c '
+                . scripts/ci/lib/package_tag.sh
+                package_release_prefix debs
+              '
+          }
+          prefix_thin="$(prefix_for clang thin)"
+          prefix_none="$(prefix_for clang none)"
+          [[ "$prefix_thin" != "$prefix_none" ]] || {
+            echo "Clang ThinLTO and Clang LTO-off share a release prefix: '$prefix_thin'" >&2
+            exit 1
+          }
+          [[ "$prefix_thin" == "gaokun3-debs-v7.2-std-clang-" ]] || {
+            echo "unexpected Clang ThinLTO prefix: '$prefix_thin'" >&2
+            exit 1
+          }
+          [[ "$prefix_none" == "gaokun3-debs-v7.2-std-clang-lto-none-" ]] || {
+            echo "unexpected Clang LTO-off prefix: '$prefix_none'" >&2
+            exit 1
+          }
+          if KERNEL_TOOLCHAIN=gcc KERNEL_LTO=thin bash -c '. scripts/ci/lib/package_tag.sh; resolve_kernel_toolchain' 2>/dev/null; then
+            echo "KERNEL_LTO=thin must be rejected with KERNEL_TOOLCHAIN=gcc" >&2
+            exit 1
+          fi
+          echo "package release-tag LTO encoding OK"
       - name: Check source protection and boot entries
         run: python3 -m unittest discover -s tests -v
       - name: Check the DSC timing-width patch chain

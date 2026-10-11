@@ -38,6 +38,18 @@ on:
         options:
           - gcc
           - clang
+      kernel_lto:
+        description: >-
+          Link-time optimization for Clang builds: empty keeps ThinLTO (the
+          clang default), thin selects ThinLTO explicitly, none disables LTO
+          while staying on Clang. Rejected with kernel_toolchain=gcc.
+        required: false
+        default: ""
+        type: choice
+        options:
+          - ""
+          - thin
+          - none
       kernel_tune:
         description: >-
           Target tuning; the SC8280XP profile (sc8280xp / 8cx-gen3 / 8cxgen3)
@@ -78,6 +90,14 @@ on:
         required: false
         default: "clang"
         type: string
+      kernel_lto:
+        description: >-
+          Link-time optimization for Clang builds: empty keeps ThinLTO (the
+          clang default), thin selects ThinLTO explicitly, none disables LTO
+          while staying on Clang. Rejected with kernel_toolchain=gcc.
+        required: false
+        default: ""
+        type: string
       kernel_tune:
         description: >-
           Target tuning; the SC8280XP profile (sc8280xp / 8cx-gen3 / 8cxgen3)
@@ -107,6 +127,7 @@ jobs:
       BUILD_EL2: ${{ inputs.build_el2 || github.event.inputs.build_el2 || 'true' }}
       BUILD_KERNELSU: ${{ inputs.build_kernelsu || github.event.inputs.build_kernelsu || 'true' }}
       KERNEL_TOOLCHAIN: ${{ inputs.kernel_toolchain || github.event.inputs.kernel_toolchain || 'clang' }}
+      KERNEL_LTO: ${{ inputs.kernel_lto || github.event.inputs.kernel_lto }}
       KERNEL_TUNE: ${{ inputs.kernel_tune || github.event.inputs.kernel_tune }}
       GAOKUN_DIR: ${{ github.workspace }}
       WORKDIR: ${{ github.workspace }}/build-packages
@@ -196,26 +217,13 @@ jobs:
         id: release_meta
         run: |
           set -euxo pipefail
-          safe_kernel_tag="${KERNEL_TAG//\//-}"
-          safe_kernel_tag="${safe_kernel_tag//[^A-Za-z0-9._-]/-}"
-          base_suffix=""
-          if [[ "${KERNEL_BASE:-xanmod}" == "xanmod" ]]; then
-            base_suffix="-xanmod"
-          fi
-          profile="std"
-          if [[ "$BUILD_EL2" == "true" ]]; then
-            profile="${profile}-el2"
-          fi
-          if [[ "$BUILD_KERNELSU" == "true" ]]; then
-            profile="${profile}-ksu"
-          fi
-          # GCC builds keep their existing tag shape; only Clang builds add the
-          # suffix, so image workflows can tell the two toolchains apart.
-          toolchain_suffix=""
-          if [[ "${KERNEL_TOOLCHAIN:-gcc}" == "clang" ]]; then
-            toolchain_suffix="-clang"
-          fi
-          package_release_tag="gaokun3-rpms-${safe_kernel_tag}${base_suffix}-${profile}${toolchain_suffix}-$(date -u +%Y%m%d%H%M%S)"
+          # Shared with the image workflows so the published tag and the
+          # lookup prefix cannot drift. The tag encodes the toolchain and, for
+          # Clang, the selected LTO mode, so a Clang+ThinLTO package set and a
+          # Clang+LTO-off one never share a prefix.
+          . scripts/ci/lib/package_tag.sh
+          export PACKAGE_KIND=rpms
+          package_release_tag="$(render_package_release_tag)"
 
           echo "package_release_tag=$package_release_tag" >> "$GITHUB_OUTPUT"
           echo "PACKAGE_RELEASE_TAG=$package_release_tag" >> "$GITHUB_ENV"
@@ -256,6 +264,7 @@ jobs:
             -e BUILD_EL2="$BUILD_EL2" \
             -e BUILD_KERNELSU="$BUILD_KERNELSU" \
             -e KERNEL_TOOLCHAIN="$KERNEL_TOOLCHAIN" \
+            -e KERNEL_LTO="$KERNEL_LTO" \
             -e KERNEL_TUNE="$KERNEL_TUNE" \
             --user root \
             "fedora:${FEDORA_RELEASE}" \
@@ -286,7 +295,7 @@ jobs:
         uses: softprops/action-gh-release@v2.6.1
         with:
           tag_name: ${{ steps.release_meta.outputs.package_release_tag }}
-          name: gaokun3 package RPMs - ${{ env.KERNEL_TAG }}${{ env.KERNEL_BASE == 'xanmod' && ' (XanMod)' || '' }}${{ env.BUILD_EL2 == 'true' && ' + EL2' || '' }}${{ env.BUILD_KERNELSU == 'true' && ' + KernelSU' || '' }}${{ env.KERNEL_TOOLCHAIN == 'clang' && ' + Clang ThinLTO' || '' }}
+          name: gaokun3 package RPMs - ${{ env.KERNEL_TAG }}${{ env.KERNEL_BASE == 'xanmod' && ' (XanMod)' || '' }}${{ env.BUILD_EL2 == 'true' && ' + EL2' || '' }}${{ env.BUILD_KERNELSU == 'true' && ' + KernelSU' || '' }}${{ env.KERNEL_TOOLCHAIN == 'clang' && (env.KERNEL_LTO == 'none' && ' + Clang (LTO off)' || ' + Clang ThinLTO') || '' }}
           body_path: ${{ env.ARTIFACT_DIR }}/package-release-body.md
           prerelease: false
           make_latest: false
