@@ -86,7 +86,9 @@ build_variant() {
   fi
 
   make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" "${KERNEL_MAKE_ARGS[@]}" -j"$(nproc)"
-  make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" "${KERNEL_MAKE_ARGS[@]}" "$dtb"
+  # The manifest names the DTB by file name, while the qcom Makefile exposes it
+  # as a target relative to arch/arm64/boot/dts/.
+  make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" "${KERNEL_MAKE_ARGS[@]}" "qcom/$dtb"
   make -C "$src_dir" O="$out_dir" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" "${KERNEL_MAKE_ARGS[@]}" modules_prepare
 }
 
