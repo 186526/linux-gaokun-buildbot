@@ -40,9 +40,9 @@
 # KCFLAGS=-mtune=<cpu>, so a custom tuning keeps the portable armv8-a baseline.
 # An unsupported value is rejected by the compiler probe below.
 #
-# Sourced by scripts/ci/20_build_kernel_variants.sh, the package scripts under
-# scripts/ci/, and scripts/local/build_kernel.sh. After resolve_kernel_toolchain,
-# callers append "${KERNEL_MAKE_ARGS[@]}" to their make command lines.
+# Sourced by scripts/ci/20_build_kernel.sh and the package scripts under
+# scripts/ci/. After resolve_kernel_toolchain, callers append
+# "${KERNEL_MAKE_ARGS[@]}" to their make command lines.
 
 # Global state set by resolve_kernel_toolchain. Declared here so `set -u`
 # callers can expand the array even before the resolver runs.

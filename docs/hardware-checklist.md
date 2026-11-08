@@ -39,8 +39,8 @@ Fedora 应使用 `fedora` token，Ubuntu 应使用 `ubuntu` token（Debian 用 m
 
 Iris 节点出现、固件加载或 `/dev/video*` 存在，都不足以证明实际编解码工作正常。camera、EL2 另行测试，不计入普通候选已验证功能。
 
-相机修复只在 XanMod 镜像中（经 `patches/0099` 与 `dts/` 镜像落地），pinned/mainline 镜像不含该修复。后摄由错误的 `samsung,s5k3l6xx` 改为 OV13B10 后，源码层面的应用、重放、DT 与对象编译已由独立评审复现；仍需实机确认前后摄都能取流：传感器绑定成功不等于整个 CAMSS 管线可用，也不预设具体的 subdev 数量。`media-ctl` 与 `dmesg` 的 chip id 是判定依据。
+相机修复作为 `gaokun3` 分支的提交存在于内核树 `186526/linux-xanmod-gaokun3`，所有镜像都从该分支编译，因此都包含它。后摄由错误的 `samsung,s5k3l6xx` 改为 OV13B10 后，源码层面的应用、重放、DT 与对象编译已由独立评审复现；仍需实机确认前后摄都能取流：传感器绑定成功不等于整个 CAMSS 管线可用，也不预设具体的 subdev 数量。`media-ctl` 与 `dmesg` 的 chip id 是判定依据。
 
-SLPI 的 `sensor_process` 崩溃属于固件问题，内核侧加入了加载恢复守卫（`patches/el2/0023`，仅在 XanMod base 编译），且该守卫不恢复重启能力。EL2 下崩溃后 `bad phdr` 不再出现只说明不再走误导路径；启动后 SLPI 是否仍 attach 尚未实测，必须另行确认 remote 的最终状态与 start 是否被正确拒绝。
+SLPI 的 `sensor_process` 崩溃属于固件问题，内核侧加入了加载恢复守卫（内核树 `gaokun3-el2` 分支的 `remoteproc: reject booting and recovering non-restartable remotes` 提交），且该守卫不恢复重启能力。EL2 下崩溃后 `bad phdr` 不再出现只说明不再走误导路径；启动后 SLPI 是否仍 attach 尚未实测，必须另行确认 remote 的最终状态与 start 是否被正确拒绝。
 
 若出现问题，记录失败步骤、此前可用的内核 SHA 和对应 `kernel-boot.log`。由维护者判断是否发布，并为通过验收的源码建立不可变 tag；CI 不自动修改下游提交栈。

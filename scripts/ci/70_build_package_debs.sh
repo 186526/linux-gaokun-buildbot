@@ -10,12 +10,11 @@ set -euo pipefail
 
 BUILD_EL2="${BUILD_EL2:-false}"
 BUILD_KERNELSU="${BUILD_KERNELSU:-false}"
-KERN_SRC_BASE="${KERN_SRC_BASE:-${KERN_SRC:-}}"
+KERN_SRC="${KERN_SRC:-}"
 KERN_OUT="${KERN_OUT:-}"
-KERN_SRC_EL2="${KERN_SRC_EL2:-${KERN_SRC:-}}"
 KERN_OUT_EL2="${KERN_OUT_EL2:-}"
 
-: "${KERN_SRC_BASE:?missing KERN_SRC_BASE}"
+: "${KERN_SRC:?missing KERN_SRC}"
 : "${KERN_OUT:?missing KERN_OUT}"
 
 # modules_install is the only kernel make call in this script; it must use the
@@ -24,10 +23,18 @@ KERN_OUT_EL2="${KERN_OUT_EL2:-}"
 . "$GAOKUN_DIR/scripts/ci/lib/toolchain.sh"
 resolve_kernel_toolchain
 
-BASE_KREL="$(cat "$WORKDIR/kernel-release.txt")"
+# shellcheck source=lib/kernel_tree.sh
+. "$GAOKUN_DIR/scripts/ci/lib/kernel_tree.sh"
+read_kernel_manifest "$KERN_SRC"
+BASE_KREL="$KERNEL_RELEASE"
 EL2_KREL=""
-if [[ -f "$WORKDIR/kernel-release-el2.txt" ]]; then
-  EL2_KREL="$(cat "$WORKDIR/kernel-release-el2.txt")"
+if [[ "$BUILD_EL2" == "true" ]]; then
+  EL2_KREL="$KERNEL_RELEASE_EL2"
+fi
+assert_kernel_output "$KERN_OUT" "$BASE_KREL" "$KERNEL_DTB"
+if [[ -n "$EL2_KREL" ]]; then
+  : "${KERN_OUT_EL2:?missing KERN_OUT_EL2}"
+  assert_kernel_output "$KERN_OUT_EL2" "$EL2_KREL" "$KERNEL_DTB_EL2"
 fi
 
 DEB_TOPDIR="$WORKDIR/debbuild"
@@ -270,18 +277,12 @@ build_firmware_package() {
   FIRMWARE_DEB="$firmware_deb"
 }
 
-build_kernel_variant "standard" "" "$KERN_SRC_BASE" "$KERN_OUT" "$BASE_KREL" \
-  "sc8280xp-huawei-gaokun3.dtb"
+build_kernel_variant "standard" "" "$KERN_SRC" "$KERN_OUT" "$BASE_KREL" \
+  "$KERNEL_DTB"
 
 if [[ "$BUILD_EL2" == "true" ]]; then
-  : "${KERN_OUT_EL2:?missing KERN_OUT_EL2}"
-  if [[ -z "$EL2_KREL" ]]; then
-    echo "BUILD_EL2=true but kernel-release-el2.txt is missing" >&2
-    exit 1
-  fi
-
-  build_kernel_variant "el2" "-el2" "$KERN_SRC_EL2" "$KERN_OUT_EL2" "$EL2_KREL" \
-    "sc8280xp-huawei-gaokun3-el2.dtb"
+  build_kernel_variant "el2" "-el2" "${KERN_SRC_EL2:?missing KERN_SRC_EL2}" "$KERN_OUT_EL2" \
+    "$EL2_KREL" "$KERNEL_DTB_EL2"
 fi
 
 build_firmware_package
@@ -313,6 +314,7 @@ cat >"$ARTIFACT_DIR/package-manifest.json" <<EOF
 {
   "package_release_tag": "${PACKAGE_RELEASE_TAG}",
   "kernel_tag": "${KERNEL_TAG}",
+  "kernel_repository": "${KERNEL_REPOSITORY}",
   "kernel_commit": "${KERNEL_COMMIT:?missing KERNEL_COMMIT}",
   "buildbot_commit": "${BUILDBOT_COMMIT}",
   "build_el2": ${BUILD_EL2},

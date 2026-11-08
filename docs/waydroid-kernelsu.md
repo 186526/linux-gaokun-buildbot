@@ -168,7 +168,7 @@ KernelSU: ksu ioctl: permission denied for cmd=0x4b01 uid=10147
 
 `0x4b01` 是 `GRANT_ROOT`。这表示 `me.weishu.kernelsu` 的 appid `10147` 尚未成为 KernelSU manager，不能执行 root 操作。原运行内核没有 `ksu_debug_manager_appid` 参数，因此不能通过运行时文件权限或重装 APK 修复这个状态。
 
-本仓库的 `scripts/ci/lib/kernelsu.sh` 和 `scripts/local/build_kernel.sh` 已经同时启用并检查：
+本仓库的 `scripts/ci/lib/kernelsu.sh` 已经启用并检查：
 
 ```text
 CONFIG_KSU_DEBUG=y
@@ -186,10 +186,10 @@ EL2:      7.2.9-gaokun3-el2-ksu-dsi-fix-xanmod1
 - XanMod `0018-drm-msm-dsi-fix-PLL-init-in-bonded-mode.patch`；
 - media Venus 的 SC8280XP resource 使用修复；
 - HI846、DSC interface data width 和面板方向修复；
-- EL2 remoteproc `0006`、`0009`、`0010`、`0016`，以及补齐 `qcom_q6v5_read_smp2p_state()` 的 Qualcomm detached-state 前置补丁；
+- EL2 分支上的 remoteproc detached-state 与 `qcom,broken-reset` 改动；
 - `CONFIG_KSU=y`、`CONFIG_KSU_DEBUG=y`、`CONFIG_KPROBES=y`、`CONFIG_TRACEPOINTS=y`、`CONFIG_FTRACE=y`。
 
-DEB 已在本地生成，manifest 标记为 `build_el2=true` 和 `build_kernelsu=true`。为与目标机已有同名包隔离，本次构建把 EL2 的 `LOCALVERSION` 覆盖为独立后缀，得到 release `7.2.9-gaokun3-el2-ksu-waydroidtest-xanmod1`；`scripts/ci/20_build_kernel_variants.sh` 因此新增 `KERN_LOCALVERSION_EL2` 变量，默认值保持 `-gaokun3-el2`。
+DEB 已在本地生成，manifest 标记为 `build_el2=true` 和 `build_kernelsu=true`。为与目标机已有同名包隔离，本次构建把 EL2 的 `LOCALVERSION` 覆盖为独立后缀，得到 release `7.2.9-gaokun3-el2-ksu-waydroidtest-xanmod1`。该变量已随补丁序列删除；现在 EL2 的 release 由内核树 `gaokun3-manifest.json` 的 `kernel_release_el2` 决定。
 
 该隔离 EL2 内核已安装并启动，实测结果：
 
@@ -338,11 +338,7 @@ CONFIG_KALLSYMS_ALL=y
 
 `KALLSYMS_ALL` 依赖 `DEBUG_KERNEL && KALLSYMS`；本 defconfig 已有 `CONFIG_DEBUG_KERNEL=y`，因此需将 `KALLSYMS` 与 `KALLSYMS_ALL` 一并写入，并放在内核生成的规范顺序中（`CONFIG_SYSFS_SYSCALL=y` 之后、`CONFIG_PROFILING=y` 之前）。`CONFIG_KALLSYMS_SELFTEST` 显式关闭，保持与内核 `olddefconfig` 输出一致。
 
-需要同步的三处：
-
-- `patches/xanmod/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch`（XanMod 构建实际使用，同名 override 优先）；
-- `patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch`（mainline 一致性）；
-- `defconfig/gaokun3_defconfig`（镜像文件，与 patch 内容保持字节一致）。
+该改动写在内核树 `186526/linux-xanmod-gaokun3` 的 `arch/arm64/configs/gaokun3_defconfig`，以提交形式存在；本仓库不再保存 defconfig 副本。
 
 标准与 EL2 变体共用同一 `gaokun3_defconfig`，因此该修复对两者同时生效。
 
@@ -470,7 +466,7 @@ Call trace:
 修复以 pinned KernelSU 的源码补丁形式随仓库发布，由 `scripts/ci/lib/kernelsu.sh` 在克隆后、接入内核前应用：
 
 ```text
-patches/kernelsu/0001-selinux-skip-policy-rewrite-without-loaded-policy.patch
+packaging/kernelsu/0001-selinux-skip-policy-rewrite-without-loaded-policy.patch
 ```
 
 补丁对 `kernel/selinux/rules.c` 做两处最小改动：
@@ -484,7 +480,7 @@ patches/kernelsu/0001-selinux-skip-policy-rewrite-without-loaded-policy.patch
 
 `scripts/ci/lib/kernelsu.sh` 的改动：
 
-- 新增 `KERNSU_PATCH_DIR`，默认按脚本自身位置解析到仓库的 `patches/kernelsu/`；
+- 新增 `KERNSU_PATCH_DIR`，默认按脚本自身位置解析到仓库的 `packaging/kernelsu/`；
 - `apply_kernelsu_source_patches()` 对目录内每个 `*.patch` 执行 `git -C "$clone_dir" apply`，失败即中止构建；
 - `assert_kernelsu_source_guard()` 断言变换后的 `rules.c` 含守卫日志，防止“补丁能打但守卫丢失”；
 - `integrate_kernelsu()` 在接入 `drivers/kernelsu` 前调用上述两步。
@@ -494,7 +490,7 @@ patches/kernelsu/0001-selinux-skip-policy-rewrite-without-loaded-policy.patch
 ```bash
 bash -n scripts/ci/lib/kernelsu.sh
 # 对 pinned commit 932014ab 的克隆应用补丁并断言守卫
-git -C <pin-clone> apply --check patches/kernelsu/0001-selinux-skip-policy-rewrite-without-loaded-policy.patch
+git -C <pin-clone> apply --check packaging/kernelsu/0001-selinux-skip-policy-rewrite-without-loaded-policy.patch
 # 逆向校验：对变换后的树 --reverse --check 通过，证明补丁即精确 diff
 # 以最小桩头文件对 apply_kernelsu_rules()/handle_sepolicy() 做 gcc -fsyntax-only，均通过
 ```

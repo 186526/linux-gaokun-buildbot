@@ -1,13 +1,8 @@
 name: Build Image - Debian Gaokun3
 
-# The dispatch defaults mirror the XanMod source the package workflow clones.
-# With kernel_base=xanmod, gaokun3-package-debs.yml fetches the real XanMod tag
-# (KERNEL_XANMOD_TAG=7.2.9-xanmod1) and labels the package release with
-# kernel_tag, so the default here must equal that tag for the "Resolve package
-# source" step to find
-# gaokun3-debs-7.2.9-xanmod1-xanmod-<profile>-<timestamp>. With
-# kernel_base=mainline the source is the commit pinned in build.env and
-# kernel_tag is only a naming label.
+# kernel_tag names the branch of the gaokun3 XanMod fork to build from. The
+# package workflow labels its release with that same value, so the "Resolve
+# package source" step finds gaokun3-debs-gaokun3-<profile>-<timestamp>.
 #
 # With rebuild_package_debs=true the DEBs arrive as the package workflow's
 # gaokun3-package-debs artifact, because the reusable workflow is called without
@@ -21,17 +16,9 @@ on:
         required: true
         default: "trixie"
       kernel_tag:
-        description: Kernel tag / release label (XanMod uses the real tag, e.g. 7.2.9-xanmod1)
+        description: Kernel branch of the gaokun3 XanMod fork to use
         required: true
-        default: "7.2.9-xanmod1"
-      kernel_base:
-        description: Kernel base (mainline = pinned build.env commit; xanmod = gitlab.com/xanmod/linux at the real tag)
-        required: true
-        default: "xanmod"
-        type: choice
-        options:
-          - mainline
-          - xanmod
+        default: "gaokun3"
       desktop_environment:
         description: Desktop environment metapackage
         required: true
@@ -89,8 +76,7 @@ jobs:
     if: ${{ github.event.inputs.rebuild_package_debs == 'true' }}
     uses: ./.github/workflows/gaokun3-package-debs.yml
     with:
-      kernel_tag: ${{ github.event.inputs.kernel_tag }}
-      kernel_base: ${{ github.event.inputs.kernel_base }}
+      kernel_ref: ${{ github.event.inputs.kernel_tag }}
       build_el2: ${{ github.event.inputs.build_el2 == 'true' }}
       build_kernelsu: ${{ github.event.inputs.build_kernelsu == 'true' }}
       kernel_toolchain: ${{ github.event.inputs.kernel_toolchain }}
@@ -106,7 +92,6 @@ jobs:
       TZ: UTC
       DEBIAN_RELEASE: ${{ github.event.inputs.debian_release }}
       KERNEL_TAG: ${{ github.event.inputs.kernel_tag }}
-      KERNEL_BASE: ${{ github.event.inputs.kernel_base }}
       DESKTOP_ENVIRONMENT: ${{ github.event.inputs.desktop_environment }}
       EXTRA_PACKAGES: ${{ github.event.inputs.extra_packages }}
       BUILD_EL2: ${{ github.event.inputs.build_el2 }}
@@ -121,6 +106,7 @@ jobs:
       ROOTFS_DIR: ${{ github.workspace }}/build-debian/rootfs
       ARTIFACT_DIR: ${{ github.workspace }}/build-debian/artifacts
       PACKAGE_DEBS_DIR: ${{ github.workspace }}/build-debian/package-debs
+      PACKAGE_MANIFEST_DIR: ${{ github.workspace }}/build-debian/package-debs
       IMAGE_FILE: ${{ github.workspace }}/build-debian/debian-${{ github.event.inputs.debian_release }}-gaokun3.img
 
     steps:
@@ -414,7 +400,6 @@ jobs:
           image_deb_name="$(jq -r '.kernels.standard.packages.image' "$manifest_path")"
           modules_deb_name="$(jq -r '.kernels.standard.packages.modules' "$manifest_path")"
           firmware_deb_name="$(jq -r '.packages.firmware' "$manifest_path")"
-          echo "$manifest_kernel_release" > "$WORKDIR/kernel-release.txt"
 
           el2_kernel_release=""
           el2_image_deb_name=""
@@ -423,9 +408,6 @@ jobs:
             el2_kernel_release="$(jq -r '.kernels.el2.release' "$manifest_path")"
             el2_image_deb_name="$(jq -r '.kernels.el2.packages.image' "$manifest_path")"
             el2_modules_deb_name="$(jq -r '.kernels.el2.packages.modules' "$manifest_path")"
-            echo "$el2_kernel_release" > "$WORKDIR/kernel-release-el2.txt"
-          else
-            rm -f "$WORKDIR/kernel-release-el2.txt"
           fi
 
           # Install DEBs directly into the rootfs using dpkg
@@ -475,7 +457,7 @@ jobs:
           chmod +x scripts/ci/60_package_release_debian.sh
           scripts/ci/60_package_release_debian.sh
           TAG_NAME="$(cat "$WORKDIR/tag-name.txt")"
-          KREL="$(cat "$WORKDIR/kernel-release-export.txt")"
+          KREL="$(jq -er '.kernels.standard.release' "$PACKAGE_DEBS_DIR/package-manifest.json")"
           PACKAGE_GLOB="$(cat "$WORKDIR/package-glob.txt")"
           RELEASE_BODY_FILE="$(cat "$WORKDIR/release-body-file.txt")"
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"

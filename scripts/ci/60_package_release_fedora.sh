@@ -7,16 +7,15 @@ set -euo pipefail
 : "${IMAGE_CHUNK_SIZE:?missing IMAGE_CHUNK_SIZE}"
 : "${FEDORA_RELEASE:?missing FEDORA_RELEASE}"
 : "${KERNEL_TAG:?missing KERNEL_TAG}"
+: "${PACKAGE_MANIFEST_DIR:?missing PACKAGE_MANIFEST_DIR}"
 : "${DESKTOP_ENVIRONMENT:?missing DESKTOP_ENVIRONMENT}"
 : "${EXCLUDED_PACKAGES:?missing EXCLUDED_PACKAGES}"
 : "${EXTRA_PACKAGES:?missing EXTRA_PACKAGES}"
 
-KREL="$(cat "$WORKDIR/kernel-release.txt")"
 BUILD_EL2="${BUILD_EL2:-false}"
-EL2_KREL=""
-if [[ "$BUILD_EL2" == "true" && -f "$WORKDIR/kernel-release-el2.txt" ]]; then
-  EL2_KREL="$(cat "$WORKDIR/kernel-release-el2.txt")"
-fi
+# shellcheck source=lib/package_manifest.sh
+. "$(dirname "$0")/lib/package_manifest.sh"
+read_package_releases "$PACKAGE_MANIFEST_DIR"
 IMAGE_BASENAME="$(basename "$IMAGE_FILE")"
 ZST_FILE="$ARTIFACT_DIR/${IMAGE_BASENAME}.zst"
 RELEASE_BODY_FILE="$ARTIFACT_DIR/release-body.md"
@@ -113,7 +112,6 @@ sudo chown "$(id -u):$(id -g)" "$RELEASE_BODY_FILE"
 TAG_NAME="fedora${FEDORA_RELEASE}-${KREL}$(if [[ "$BUILD_EL2" == "true" ]]; then printf -- '-el2'; fi)-$(date -u +%Y%m%d%H%M%S)"
 
 echo "$TAG_NAME" > "$WORKDIR/tag-name.txt"
-echo "$KREL" > "$WORKDIR/kernel-release-export.txt"
 echo "$PACKAGE_GLOB" > "$WORKDIR/package-glob.txt"
 basename "$RELEASE_BODY_FILE" > "$WORKDIR/release-body-file.txt"
 

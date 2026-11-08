@@ -2,39 +2,56 @@
 
 # linux-gaokun-buildbot
 
-面向华为 MateBook E Go 2023（代号 `gaokun3`）、基于高通骁龙 8cx Gen3（`SC8280XP`）平台的 Linux 镜像构建脚本、工具和固件。内核源码、驱动、设备树及配置在独立的下游内核仓库维护。
+面向华为 MateBook E Go 2023（代号 `gaokun3`）、基于高通骁龙 8cx Gen3（`SC8280XP`）平台的 Linux 镜像构建脚本、工具和固件。内核源码、驱动、设备树及配置在 XanMod 分支 [186526/linux-xanmod-gaokun3](https://gitlab.com/186526/linux-xanmod-gaokun3) 维护，以普通提交形式存在于 `gaokun3` 与 `gaokun3-el2` 两个分支；本仓库只负责获取该内核树、构建并打包。
 
-**迁移草案，尚不可发布。** 内核源码在独立下游仓库 [gaokun3/linux](https://github.com/gaokun3/linux) 维护，本仓库为 [186526/linux-gaokun-buildbot](https://github.com/186526/linux-gaokun-buildbot)；Iris/Himax/EC 候选已通过完整内核编译、DEB/RPM 打包及 Fedora 镜像构建，仍待实机验收。参见 [迁移记录与检查项](migration.md)。
+**迁移草案，尚不可发布。** 本仓库为 [186526/linux-gaokun-buildbot](https://github.com/186526/linux-gaokun-buildbot)；Iris/Himax/EC 候选已通过完整内核编译、DEB/RPM 打包及 Fedora 镜像构建，仍待实机验收。参见 [迁移记录与检查项](migration.md)。
 
-`build.env` 固定内核 SHA 与发行版版本；`./build.sh kernel|debs|rpms` 是本地入口，镜像组装暂仍由 CI 执行。
+`build.env` 指定内核仓库、分支与发行版版本；`./build.sh kernel|debs|rpms` 是本地入口，镜像组装暂仍由 CI 执行。
+
+### 内核输入
+
+```bash
+KERNEL_REPOSITORY=186526/linux-xanmod-gaokun3
+KERNEL_TAG=gaokun3
+KERNEL_EL2_REF=gaokun3-el2
+KERNEL_COMMIT=
+KERNEL_EL2_COMMIT=
+FEDORA_RELEASE=44
+UBUNTU_RELEASE=26.04
+```
+
+`KERNEL_TAG` 既是从 `KERNEL_REPOSITORY` 获取的分支，也是软件包携带的命名标签。`KERNEL_COMMIT` 与 `KERNEL_EL2_COMMIT` 是可选的精确提交固定值：留空表示跟随分支尖端，填写后 `fetch_kernel_tree` 会拒绝解析到其他提交的分支。
+
+`scripts/ci/lib/kernel_tree.sh` 以 `--depth=1` 获取该分支到分离检出目录，并拒绝复用有本地改动的目录。随后它读取内核树根的 `gaokun3-manifest.json`，其中给出打包阶段需要的 release 字符串、defconfig 与 DTB 名称，因此本仓库的脚本不硬编码设备文件名。
+
+本地运行时会优先复用已有检出：设置了 `KERNEL_SRC` 就用它，否则若 `~/git/linux-xanmod-gaokun3` 存在就用它，都不存在才去获取。
+
+`BUILD_EL2=true` 时，EL2 变体从 `KERNEL_EL2_REF` 取到独立检出目录（`KERN_SRC_EL2`，默认 `$WORKDIR/linux-el2`）单独编译，标准变体不会被就地打补丁。
 
 ### 默认构建组合
 
 CI 的 `workflow_dispatch` 与可复用 `workflow_call` 默认使用经审阅的默认组合：
 
 ```text
-kernel_base=xanmod  kernel_tag=7.2.9-xanmod1
+kernel_ref=gaokun3
 build_el2=true     build_kernelsu=true
 kernel_toolchain=clang   kernel_tune=sc8280xp
 ```
 
-`kernel_toolchain=clang` 选择 Clang/LLVM + ThinLTO；`kernel_tune=sc8280xp` 追加 `KCFLAGS=-march=armv8.4-a+crypto -mtune=cortex-x1c`；`build_el2=true`/`build_kernelsu=true` 在标准与 EL2 两个变体中包含 `-gaokun3-el2` 包集与固定版本的 KernelSU。这些仍是输入：改回 `kernel_base=mainline`、`build_el2=false`、`build_kernelsu=false`、`kernel_toolchain=gcc` 或将 `kernel_tune` 留空即可回到原先的便携/标准行为。`build.sh` 与旧脚本不读取 `kernel_tune`，本地需通过环境变量 `KERNEL_TUNE` 传入。`build.env` 未改：仍固定 mainline 检出且不设 `KERNEL_BASE`，因此本地 `./build.sh` 默认仍是固定提交，只有 CI 工作流默认 XanMod。
+`kernel_toolchain=clang` 选择 Clang/LLVM + ThinLTO；`kernel_tune=sc8280xp` 追加 `KCFLAGS=-march=armv8.4-a+crypto -mtune=cortex-x1c`；`build_el2=true`/`build_kernelsu=true` 在标准与 EL2 两个变体中包含 `-gaokun3-el2` 包集与固定版本的 KernelSU。这些仍是输入：改回 `build_el2=false`、`build_kernelsu=false`、`kernel_toolchain=gcc` 或将 `kernel_tune` 留空即可回到便携/标准行为。`kernel_ref` 选择内核分支或 tag；EL2 变体固定从 `KERNEL_EL2_REF`（`gaokun3-el2`）获取。`build.sh` 不读取工作流输入，本地需通过环境变量 `KERNEL_TUNE` 传入。
 
 ## 包含内容
 
 ### 仓库结构
 
-- `build.sh`：本地构建入口（`./build.sh kernel|debs|rpms`），读取 `build.env` 并准备固定版本的内核检出
-- `build.env`：经审阅的固定构建输入（内核仓库、tag、commit、EL2 commit、发行版版本）
-- `patches/`：叠加在固定内核之上的设备补丁序列，以及 `patches/kernelsu/PINNED_REVISION.md`
-- `defconfig/`、`dts/`：`patches/0099` 内嵌 DTS 与 `gaokun3_defconfig` 的镜像副本（构建实际应用的是补丁，而非这两个目录）
+- `build.sh`：本地构建入口（`./build.sh kernel|debs|rpms`），读取 `build.env` 并准备内核检出
+- `build.env`：经审阅的构建输入（内核仓库、分支、可选提交固定、发行版版本）
 - `docs/`：中英文使用/构建指南与平台说明
 - `firmware/`：镜像构建使用的最小固件集
-- `packaging/`：各发行版内核和固件包的打包模板和元数据
-- `scripts/ci/`：工作流构建、镜像创建和打包脚本
-- `scripts/lib/`：固定源码的准备与守卫
-- `scripts/local/`：保留的设备端交互式构建脚本（旧路径）
-- `tests/`：源码守卫与 `kernel-install` entry-token/BLS 行为的 Python 单元测试
+- `packaging/`：各发行版内核和固件包的打包模板、元数据，以及固定版本的 KernelSU 修订记录
+- `scripts/ci/`：内核构建、镜像创建和打包脚本
+- `scripts/ci/lib/`：内核获取与 manifest 读取、工具链选择、KernelSU 接入、包 manifest 读取、发布 tag 渲染
+- `tests/`：`kernel-install` entry-token/BLS 行为的 Python 单元测试
 - `tools/`：设备专属辅助脚本、服务文件、镜像资产和 EL2 EFI 载荷
 
 ### 软件包产物
@@ -53,17 +70,15 @@ kernel_toolchain=clang   kernel_tune=sc8280xp
 - Fedora、Debian 和 Ubuntu 镜像 release 包含压缩后的可安装镜像。
 - Gaokun RPM 和 DEB release 包含镜像工作流所使用的独立内核与固件软件包集合。
 
-### 内核补丁
+### 内核内容
 
-固定内核已包含大部分设备使能内容，构建在其之上按序列、按文件名顺序应用剩余补丁：
+设备适配以提交形式存在于内核 fork 中，本仓库不再重放补丁：
 
-- `patches/upstream/*`（`0024`、`0025`）：USB UCSI `huawei_gaokun` 端口初始化与事件处理，以及 Gaokun3 ADSP heap 与设备支持修正。
-- `patches/others/*`（`0007`–`0012`）：SC8280XP 显示时钟 parking 与 rate-parent 修复、`spi-qcom-geni` 的强制 GSI 模式属性、fbdev 屏幕缓冲区虚拟化、DPU DSC 接口数据宽度，以及 `himax-hx83121a` 面板方向上报。
-- `patches/media/*`（`0001`、`0004`、`0005`、`0007`）：SC8280XP Venus 资源结构，改编自 [jhovold/linux](https://github.com/jhovold/linux/commits/wip/sc8280xp-6.16) 的 Venus 系列。
-- `patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch`：导入本仓库的 DTS 文件与 `gaokun3_defconfig`。该补丁自包含，是 `dts/` 与 `defconfig/` 的权威副本。
-- `patches/el2/*`（`0006`、`0011`）：detached remoteproc 重启，以及 Qualcomm SCM 共享内存桥 VMID 绑定。改编自 [TravMurav/linux](https://github.com/TravMurav/linux/tree/x13s-6.18-v1.1-cxsd)；`build_el2=true` 时应用（CI 默认开启）。
-- `patches/xanmod/*`：当以 [XanMod](https://gitlab.com/xanmod/linux) 内核作为基础（`kernel_base=xanmod`）时的本地覆盖。同名文件会替换共享补丁（例如 `patches/xanmod/0099-...`）；无共享对应项的文件（`patches/xanmod/upstream/0018-...`、`patches/xanmod/others/0018-...`、`patches/xanmod/media/0006-...`、`patches/xanmod/el2/0009,0010,0016-...`）仅在该基础下应用。`git apply --reverse --check` 成功即视为已存在于基线，会自动跳过。
-- **[可选]** `patches/kernelsu/PINNED_REVISION.md`：记录固定的上游 KernelSU 版本。KernelSU 不内联；当 `BUILD_KERNELSU=true` 时，构建会克隆 `https://github.com/tiann/KernelSU.git` 的 `v3.3.0`（`932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e`）并在配置前接入内核树，因此标准与 EL2 两个变体都会包含 KernelSU。
+- `gaokun3` 分支：设备补丁序列（UCSI、EC、ADSP、HI846、显示时钟、SPI GSI、fbdev、DSC 时序、面板方向、MHI 固件保留）、设备树与相机 dtsi、`gaokun3_defconfig`。
+- `gaokun3-el2` 分支：`gaokun3` 加上 EL2 序列（SMP2P、detached remoteproc 重启、Qualcomm SCM 共享内存桥）、不可重启 remote 的守卫，以及 `CONFIG_LOCALVERSION="-gaokun3-el2"`。EL2 DTB 由上游 `sc8280xp-el2.dtbo` overlay 叠加到设备树生成。
+- 内核树根的 `gaokun3-manifest.json`：打包阶段读取的 release 字符串、defconfig 与 DTB 名称。
+
+- **[可选]** `packaging/kernelsu/PINNED_REVISION.md`：记录固定的上游 KernelSU 版本。KernelSU 不内联；当 `BUILD_KERNELSU=true` 时，构建会克隆 `https://github.com/tiann/KernelSU.git` 的 `v3.3.0`（`932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e`）并在配置前接入内核树，因此标准与 EL2 两个变体都会包含 KernelSU。`packaging/kernelsu/*.patch` 保存对该检出的源码修改。
 
 ### Tools 来源
 
@@ -101,7 +116,7 @@ kernel_toolchain=clang   kernel_tune=sc8280xp
 
 ## 参考
 
-- [gaokun3/linux](https://github.com/gaokun3/linux)：`build.env` 固定的下游内核树；设备使能、DTS、驱动与 `gaokun3_defconfig` 都由它维护，本仓库此前以补丁形式引入。
+- [186526/linux-xanmod-gaokun3](https://gitlab.com/186526/linux-xanmod-gaokun3)：`build.env` 指定的 XanMod fork；设备使能、DTS、驱动、`gaokun3_defconfig` 与 EL2 分支都由它维护，本仓库只获取并打包。
 - [right-0903/linux-gaokun](https://github.com/right-0903/linux-gaokun)：内核补丁和设备支持工作的主要来源，附有详细的提交信息和说明。
 - [TheUnknownThing/linux-gaokun](https://github.com/TheUnknownThing/linux-gaokun)：内核补丁和设备支持工作的另一个分支，包含触摸屏和 EC 相关的独特提交和说明。
 - [whitelewi1-ctrl/matebook-e-go-linux](https://github.com/whitelewi1-ctrl/matebook-e-go-linux)：最早修复面板背光问题的仓库，包含一些额外的 Gaokun3 Linux 支持资源和修改。

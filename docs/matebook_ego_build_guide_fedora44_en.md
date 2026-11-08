@@ -1,4 +1,4 @@
-> Historical guide: patch paths and kernel build steps below describe the pre-migration tree. See the [migration record](migration.md) for current entry points and blockers. EL2 builds are paused.
+> Historical guide: the kernel build steps below describe the pre-migration tree, where device patches lived in this repository. The kernel is now the `gaokun3` and `gaokun3-el2` branches of `186526/linux-xanmod-gaokun3`. See the [migration record](migration.md) for current entry points.
 
 English | [中文](matebook_ego_build_guide_fedora44_zh.md)
 

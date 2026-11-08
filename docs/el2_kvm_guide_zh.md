@@ -1,4 +1,4 @@
-> 历史指南：以下补丁目录和内核构建步骤适用于迁移前版本。当前入口及未完成项见 [迁移记录](migration.md)。EL2 为补丁式：构建时叠加 `patches/el2`，不再依赖 `KERNEL_EL2_COMMIT`。
+> 历史指南：以下 EL2 载荷、EFI 布局与固件说明仍然适用。内核侧现在来自 gaokun3 XanMod fork 的 `gaokun3-el2` 分支；当前入口见 [迁移记录](migration.md)。
 
 [English](el2_kvm_guide_en.md) | 中文
 
@@ -6,7 +6,7 @@
 
 ## 1. 文档定位
 
-- 构建流程可以可选产出 `-gaokun3-el2` 内核变体以及所需 EFI 载荷。EL2 为补丁式：`scripts/ci/20_build_kernel_variants.sh` 在准备好的源码树上叠加 `patches/el2`（以及 `patches/xanmod/el2` 覆盖），因此 `BUILD_EL2=true` 不再需要 `KERNEL_EL2_COMMIT`；`build.env` 中该值保持为空。
+- 构建流程可以可选产出 `-gaokun3-el2` 内核变体以及所需 EFI 载荷。`BUILD_EL2=true` 时，`scripts/ci/20_build_kernel.sh` 把 `KERNEL_EL2_REF`（`gaokun3-el2`）取到独立检出目录，用 `gaokun3_defconfig` 编译；本仓库不再应用任何补丁序列。
 - 本文更侧重说明这些 EL2 构建产物背后的实现细节、启动链结构，以及内核与固件要求。
 - 因此它更适合作为理解、调试和定制 EL2 路径的参考，而不是构建完成后必须逐项执行的清单。
 
@@ -130,17 +130,15 @@ CONFIG_QCOM_PIL_INFO=y
 
 不同内核版本的符号名称可能略有差异，请以实际版本为准，但核心原则不变：**KVM、remoteproc 及 qcom PAS/Q6V5 必须齐备**。
 
-### 4.2 补丁的作用
+### 4.2 EL2 内核的来源
 
-当前可直接使用仓库内 `patches/el2` 中的补丁集。它现在只有两个补丁（`0006` 与 `0011`），覆盖两个方向：
+EL2 内核是 gaokun3 XanMod fork（`186526/linux-xanmod-gaokun3`）的
+`gaokun3-el2` 分支。remoteproc handover / late attach、EL2 下的 qcom PAS /
+SCM / SHM bridge 支持，以及 SMP2P、rpmsg、QRTR、pmic_glink 稳定性改动都以普通
+提交的形式存在于该分支。本仓库只负责获取该分支（`build.env` 中的
+`KERNEL_EL2_REF`），用 `gaokun3_defconfig` 编译，并打包成 `-el2` 内核包。
 
-1. **remoteproc handover / late attach**
-   使 Linux 能够接管由 `qebspil` 预先启动的 remoteproc，而不是把这些 remoteproc 视为异常或重复启动对象。`0006` 允许重启已 detached 的 remoteproc。
-
-2. **qcom PAS / SCM / SHM bridge 在 EL2 下的支持**
-   使 SCM 与 SHM bridge 在 EL2 下使用正确的 owner/VMID。`0011` 新增 `qcom,shm-bridge-vm` 绑定。
-
-此处原先列出的 SMP2P / rpmsg / QRTR / pmic_glink 稳定性补丁并不在当前 `patches/el2` 中，而是保留在 XanMod 专用覆盖 `patches/xanmod/el2/`（`0009`、`0010`、`0016`），仅在 `KERNEL_BASE=xanmod` 时应用。EL2 为补丁式，XanMod EL2 构建会应用 `patches/el2` 的 `0006` 与 `0011`，并叠加 `patches/xanmod/el2` 的 `0009`、`0010`、`0016`。
+核心原则不变：**KVM、remoteproc 及 qcom PAS/Q6V5 必须齐备**。
 
 ## 5. 固件准备
 

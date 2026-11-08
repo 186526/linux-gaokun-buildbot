@@ -1,4 +1,4 @@
-> 历史指南：以下补丁目录和内核构建步骤适用于迁移前版本。当前入口及未完成项见 [迁移记录](migration.md)。EL2 暂不可构建。
+> 历史指南：以下内核构建步骤适用于迁移前版本，当时设备补丁存放在本仓库。内核现在来自 `186526/linux-xanmod-gaokun3` 的 `gaokun3` 与 `gaokun3-el2` 分支。当前入口见 [迁移记录](migration.md)。
 
 [English](matebook_ego_build_guide_fedora44_en.md) | 中文
 

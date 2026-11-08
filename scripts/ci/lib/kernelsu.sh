@@ -2,7 +2,7 @@
 # KernelSU integration for the gaokun3 kernel variants.
 #
 # KernelSU is cloned from upstream at the pinned revision recorded in
-# patches/kernelsu/PINNED_REVISION.md, then wired into the kernel tree the
+# packaging/kernelsu/PINNED_REVISION.md, then wired into the kernel tree the
 # same way upstream kernel/setup.sh does it, without the git stash / git pull
 # / branch checkout that script performs.
 
@@ -12,10 +12,10 @@ KERNSU_COMMIT="${KERNSU_COMMIT:-932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e}"
 KERNSU_SRC="${KERNSU_SRC:-}"
 
 # Repository-carried source transformations for the pinned KernelSU checkout.
-# Defaults to patches/kernelsu/ at the repository root, resolved from this
+# Defaults to packaging/kernelsu/ at the repository root, resolved from this
 # file's location so a sourced integration does not depend on the caller's
 # working directory.
-KERNSU_PATCH_DIR="${KERNSU_PATCH_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/patches/kernelsu}"
+KERNSU_PATCH_DIR="${KERNSU_PATCH_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/packaging/kernelsu}"
 
 KERNSU_MAKEFILE_LINE='obj-$(CONFIG_KSU) += kernelsu/'
 KERNSU_KCONFIG_LINE='source "drivers/kernelsu/Kconfig"'
@@ -63,7 +63,7 @@ fetch_kernelsu() {
 # Each *.patch under KERNSU_PATCH_DIR is applied with `git apply`, which is
 # strict about context and fails the build if a patch no longer matches the
 # pinned revision. This is how the SELinux no-policy guard reaches the built
-# kernel without vendoring KernelSU; see patches/kernelsu/PINNED_REVISION.md.
+# kernel without vendoring KernelSU; see packaging/kernelsu/PINNED_REVISION.md.
 apply_kernelsu_source_patches() {
   local clone_dir="$1"
   local patch_dir="${KERNSU_PATCH_DIR:-}"

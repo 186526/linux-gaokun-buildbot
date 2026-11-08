@@ -6,8 +6,8 @@ upstream commits ca5d2010 and 0656fd81 for the RPM/environment and
 firmware/boot-hook changes.
 
 This record predates the pinned-kernel migration and is kept as history. The
-kernel is now pinned by `build.env` (`KERNEL_COMMIT=73033564068250603f5b2150c408554faaf22d66`),
-not by the commit named below.
+kernel now comes from `build.env`'s `KERNEL_REPOSITORY` and `KERNEL_TAG`, not
+from the commit named below.
 
 At the time of this record both distributions kept an ESP and a single ext4 root
 partition; the kernel was then pinned to 0a95cd00a3eb3a43f04746d2b4c6c9f1c7acf485,

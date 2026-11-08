@@ -30,16 +30,6 @@ Local pinned build:
 KERNEL_TOOLCHAIN=clang KERNEL_TUNE=sc8280xp BUILD_EL2=true ./build.sh debs
 ```
 
-Legacy on-device helper:
-
-```bash
-export KERNEL_TOOLCHAIN=clang
-export KERNEL_LTO=thin
-export KERNEL_TUNE=sc8280xp      # -march=armv8.4-a+crypto -mtune=cortex-x1c (unset for the portable baseline)
-export INSTALL_DEPS=true          # installs clang, lld, and llvm
-scripts/local/build_kernel.sh < /dev/null
-```
-
 The `checks.yml` workflow additionally runs `shellcheck` over
 `scripts/ci/lib/toolchain.sh` and asserts the `KERNEL_TUNE` selection (the
 SC8280XP profile and a bare CPU name). The package workflows and the image
@@ -74,13 +64,13 @@ flags.
 
 so the same array carries the toolchain and the tuning into every make call.
 
-- `scripts/ci/20_build_kernel_variants.sh`: `gaokun3_defconfig`, `olddefconfig`,
-  the parallel build, `modules_prepare`, the EL2 source `clean`, and both
-  variants (standard and EL2 use the one `build_variant` function, so they
-  cannot diverge).
+- `scripts/ci/20_build_kernel.sh`: the defconfig named by the kernel tree's
+  `gaokun3-manifest.json`, `olddefconfig`, the parallel build, the DTB, and
+  `modules_prepare`. Both variants use the one `build_variant` function, so
+  they cannot diverge; the EL2 variant is a separate checkout of
+  `KERNEL_EL2_REF`.
 - `scripts/ci/70_build_package_debs.sh` and
   `scripts/ci/70_build_package_rpms.sh`: `modules_install`.
-- `scripts/local/build_kernel.sh`: the same set of calls.
 
 The flags mean:
 

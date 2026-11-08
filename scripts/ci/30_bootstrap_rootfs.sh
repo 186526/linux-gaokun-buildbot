@@ -21,7 +21,7 @@ ENABLE_RPMFUSION="${ENABLE_RPMFUSION:-false}"
 BUILD_EL2="${BUILD_EL2:-false}"
 
 manifest_path="$PACKAGE_RPMS_DIR/package-manifest.json"
-KREL="$(cat "$WORKDIR/kernel-release.txt")"
+KREL="$(jq -er '.kernels.standard.release' "$manifest_path")"
 
 rpm_names=(
   "$(jq -r '.kernels.standard.packages.kernel' "$manifest_path")"
@@ -101,5 +101,5 @@ CONTAINER_EOF
 
 sudo depmod -b "$ROOTFS_DIR" -a "$KREL"
 if [[ "$BUILD_EL2" == "true" ]]; then
-  sudo depmod -b "$ROOTFS_DIR" -a "$(cat "$WORKDIR/kernel-release-el2.txt")"
+  sudo depmod -b "$ROOTFS_DIR" -a "$(jq -er '.kernels.el2.release' "$manifest_path")"
 fi

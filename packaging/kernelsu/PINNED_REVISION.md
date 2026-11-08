@@ -87,7 +87,7 @@ enables `CONFIG_KPROBES`, `CONFIG_FTRACE`, and `CONFIG_KSU` in the generated
 Change the commit in the table above and the defaults in
 `scripts/ci/lib/kernelsu.sh` in the same commit, then re-validate every patch
 under this directory against the new revision with
-`git apply --check patches/kernelsu/*.patch`, and run a full package build and
+`git apply --check packaging/kernelsu/*.patch`, and run a full package build and
 confirm `CONFIG_KSU=y` in the produced `kernel-out/.config`. The build itself
 fails when a source transformation no longer applies or when the SELinux guard
 is absent from the transformed tree, so a stale patch cannot ship silently.

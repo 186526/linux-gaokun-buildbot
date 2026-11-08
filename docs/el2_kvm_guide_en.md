@@ -1,4 +1,4 @@
-> Historical guide: patch paths and kernel build steps below describe the pre-migration tree. See the [migration record](migration.md) for current entry points and blockers. EL2 is patch-based: the build applies `patches/el2` and no longer requires `KERNEL_EL2_COMMIT`.
+> Historical guide: the EL2 payload, EFI layout and firmware notes below still apply. The kernel side now comes from the `gaokun3-el2` branch of the gaokun3 XanMod fork; see the [migration record](migration.md) for current entry points.
 
 English | [中文](el2_kvm_guide_zh.md)
 
@@ -6,7 +6,7 @@ English | [中文](el2_kvm_guide_zh.md)
 
 ## 1. Positioning
 
-- The build flow supports an optional `-gaokun3-el2` kernel variant and the required EFI payloads. EL2 is patch-based: `scripts/ci/20_build_kernel_variants.sh` applies `patches/el2` (plus any `patches/xanmod/el2` overrides) on top of the prepared source tree, so `BUILD_EL2=true` no longer requires `KERNEL_EL2_COMMIT`, which `build.env` leaves empty.
+- The build flow supports an optional `-gaokun3-el2` kernel variant and the required EFI payloads. With `BUILD_EL2=true`, `scripts/ci/20_build_kernel.sh` fetches `KERNEL_EL2_REF` (`gaokun3-el2`) into its own checkout and builds it with `gaokun3_defconfig`; no patch series is applied in this repository.
 - This document focuses on implementation details, boot-chain structure, and kernel/firmware expectations behind that EL2-capable build output.
 - Use it when you want to understand, debug, or customize the EL2 path rather than as a mandatory post-build checklist.
 
@@ -130,17 +130,17 @@ CONFIG_QCOM_PIL_INFO=y
 
 Symbol names may vary slightly between kernel versions, please refer to actual version, but the core principle remains: **KVM, remoteproc and qcom PAS/Q6V5 must all be present**.
 
-### 4.2 Purpose of Patches
+### 4.2 Where the EL2 Kernel Comes From
 
-Currently, you can directly use the patch set in `patches/el2` in the repository. It now contains two patches (`0006` and `0011`) and covers two directions:
+The EL2 kernel is the `gaokun3-el2` branch of the gaokun3 XanMod fork
+(`186526/linux-xanmod-gaokun3`). It carries the remoteproc handover / late
+attach work, the qcom PAS / SCM / SHM bridge support under EL2, and the SMP2P,
+rpmsg, QRTR and pmic_glink stability changes as ordinary commits. This
+repository only fetches that branch (`KERNEL_EL2_REF` in `build.env`), builds
+it with `gaokun3_defconfig`, and packages it as the `-el2` kernel set.
 
-1. **remoteproc handover / late attach**
-   Enable Linux to take over remoteproc pre-started by `qebspil`, rather than treating these remoteproc as abnormal or duplicate startup targets. `0006` allows restarting a detached remoteproc.
-
-2. **qcom PAS / SCM / SHM bridge support under EL2**
-   Enable SCM and SHM bridge to use the correct owner/VMID under EL2. `0011` adds the `qcom,shm-bridge-vm` binding.
-
-The additional SMP2P / rpmsg / QRTR / pmic_glink stability patches previously listed here are not part of the current `patches/el2` set. They remain in the XanMod-only overrides under `patches/xanmod/el2/` (`0009`, `0010`, `0016`) and are applied only when `KERNEL_BASE=xanmod`. EL2 is patch-based, so a XanMod EL2 build applies `0006` and `0011` from `patches/el2` plus `0009`, `0010`, and `0016` from `patches/xanmod/el2`.
+The core principle remains: **KVM, remoteproc and qcom PAS/Q6V5 must all be
+present**.
 
 ## 5. Firmware Preparation
 

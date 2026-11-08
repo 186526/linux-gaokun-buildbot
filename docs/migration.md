@@ -1,12 +1,12 @@
 # gaokun3 双仓库迁移记录
 
-这是迁移候选，不能作为已验证发行版发布。内核在独立下游仓库 [gaokun3/linux](https://github.com/gaokun3/linux) 的 `gaokun3` 分支维护，`build.env` 固定其精确提交；buildbot 迁移位于 [186526/linux-gaokun-buildbot](https://github.com/186526/linux-gaokun-buildbot)。原仓库 PR #7 保留迁移评审记录。
+这是迁移候选，不能作为已验证发行版发布。内核在 XanMod 分支 [186526/linux-xanmod-gaokun3](https://gitlab.com/186526/linux-xanmod-gaokun3) 的 `gaokun3` 与 `gaokun3-el2` 分支维护，`build.env` 指定仓库与分支；buildbot 迁移位于 [186526/linux-gaokun-buildbot](https://github.com/186526/linux-gaokun-buildbot)。原仓库 PR #7 保留迁移评审记录。
 
 ## 仓库边界
 
-- `gaokun3/linux`：下游内核仓库，`gaokun3` 分支维护设备提交；DTS、驱动和 `gaokun3_defconfig` 都在内核树内。本仓库不再自行维护这三类文件的可构建副本。
+- `186526/linux-xanmod-gaokun3`：XanMod 内核树，`gaokun3` 分支维护设备提交，`gaokun3-el2` 分支在其上叠加 EL2 序列；DTS、驱动、`gaokun3_defconfig` 与 `gaokun3-manifest.json` 都在内核树内。本仓库不再维护这些文件的可构建副本。
 - `186526/linux-gaokun-buildbot`：Bash 构建入口、打包、镜像、固件及用户空间工具。GitHub Actions 负责调度。镜像组装仍包含工作流内联步骤，尚未全部抽成脚本。
-- `drivers/` 已删除；设备驱动源码只在固定内核树内维护。`patches/`、`dts/`、`defconfig/` 仍存在：`patches/` 保存叠加在固定内核上的补丁序列，`dts/` 与 `defconfig/` 是 `patches/0099` 内嵌内容的镜像副本。构建实际读取的是补丁，不是这两个目录；删除它们不影响构建结果，但会丢失可对照的副本。`drivers/` 的原件保留在迁移前提交 `315528c028843794ccd0f3d9dab373b03033150f`。
+- `patches/`、`dts/`、`defconfig/`、`drivers/` 均已删除；设备驱动、设备树与 defconfig 只在内核树内维护，以提交形式存在。补丁序列已逐条落成内核树提交，原件保留在迁移前提交 `315528c028843794ccd0f3d9dab373b03033150f`。
 
 ## 固定输入
 
@@ -14,38 +14,35 @@
 
 | 输入 | 当前固定值 |
 | --- | --- |
-| 内核仓库 | `gaokun3/linux` |
-| 标签 | `gaokun3` |
-| 检出提交 | `73033564068250603f5b2150c408554faaf22d66` |
-| EL2 提交 | 未设置；EL2 为补丁式，不参与检出 |
+| 内核仓库 | `186526/linux-xanmod-gaokun3` |
+| 分支 | `KERNEL_TAG=gaokun3` |
+| EL2 分支 | `KERNEL_EL2_REF=gaokun3-el2` |
+| 提交固定 | `KERNEL_COMMIT`、`KERNEL_EL2_COMMIT` 留空表示跟随分支尖端 |
 | Fedora / Ubuntu | 44 / 26.04 |
 
-`KERNEL_TAG` 目前只是产物命名标签，并不代表 GitHub 已存在该 tag；真正检出依据为 `KERNEL_COMMIT`，由 `scripts/lib/kernel_source.sh` 以 `git fetch --depth=1` 取对应提交并做分离头检出。已有源码目录必须与 `KERNEL_COMMIT` 完全一致，且不得含本地改动或未跟踪文件，否则脚本报错退出。正式发布前仍需建立不可变 tag。Ubuntu rootfs 下载失败直接停止，不再回退 beta。
+`scripts/ci/lib/kernel_tree.sh` 以 `git fetch --depth=1` 取 `KERNEL_TAG` 并做分离头检出，已有源码目录含本地改动时拒绝继续；设置 `KERNEL_COMMIT` 后，分支尖端与固定提交不一致会报错退出。检出后读取内核树根的 `gaokun3-manifest.json`，release 字符串、defconfig 与 DTB 名称都来自该文件。正式发布前仍需建立不可变 tag。Ubuntu rootfs 下载失败直接停止，不再回退 beta。
 
 软件包清单记录内核 SHA 与 buildbot SHA；镜像组装核对内核 SHA，防止复用不同源码生成的软件包。
 
-## 内核来源选择
+## 内核来源
 
-`KERNEL_BASE` 决定源码来源，两条路径互不相同：
+内核只有一个来源：`KERNEL_REPOSITORY` 指定的 XanMod fork。`KERNEL_TAG` 既是取源码的分支或 tag，也是产物命名标签；EL2 变体固定从 `KERNEL_EL2_REF` 取到独立检出，不再对标准树打补丁。
 
-- `mainline`（默认）：按 `build.env` 固定的 `KERNEL_COMMIT` 检出（`scripts/lib/kernel_source.sh`）。此时 `kernel_tag` 仅是产物命名标签，不用于取源码。
-- `xanmod`：由打包工作流克隆 `https://gitlab.com/xanmod/linux.git` 并检出真实 XanMod tag，tag 由工作流内的 `KERNEL_XANMOD_TAG`（当前 `7.2.9-xanmod1`）给出。`kernel_tag` 必须与该 tag 一致，否则镜像工作流按前缀 `gaokun3-debs-<tag>-xanmod-<profile>-` 查找不到软件包 release。XanMod 树没有 `gaokun3_defconfig`，该文件由 `patches/0099` 生成，因此不对其做预检查。
-
-因此全部镜像工作流与打包工作流的 dispatch 默认均为 `kernel_tag=7.2.9-xanmod1`、`kernel_base=xanmod`、`build_el2=true`、`build_kernelsu=true`、`kernel_toolchain=clang`、`kernel_tune=sc8280xp`；改用 mainline 时需同时改回 `kernel_tag`（例如 `v7.2-rc2`）并把 `build_el2`、`build_kernelsu`、`kernel_toolchain`、`kernel_tune` 按需关掉或改回 `gcc`、留空。
+因此全部镜像工作流与打包工作流的 dispatch 默认均为 `kernel_ref=gaokun3`、`build_el2=true`、`build_kernelsu=true`、`kernel_toolchain=clang`、`kernel_tune=sc8280xp`；只需按需关掉 `build_el2`、`build_kernelsu`，或把 `kernel_toolchain` 改回 `gcc`、`kernel_tune` 留空。
 
 ## 本地构建
 
-安装内核构建依赖（Git、make、GCC、bc、bison、flex、OpenSSL/libelf 开发包、pahole、rsync、kmod）；x86 主机还需 AArch64 交叉工具链。DEB 打包需 dpkg-dev，RPM 打包需 rpmbuild 及相应发行版工具。打包和镜像完整流程以原生 arm64 CI 为验证目标。
+安装内核构建依赖（Git、make、GCC、bc、bison、flex、OpenSSL/libelf 开发包、pahole、rsync、kmod、jq）；x86 主机还需 AArch64 交叉工具链。DEB 打包需 dpkg-dev，RPM 打包需 rpmbuild 及相应发行版工具。打包和镜像完整流程以原生 arm64 CI 为验证目标。
 
 ```bash
 ./build.sh kernel
 ./build.sh debs
 ./build.sh rpms
-# 也可使用提交匹配且干净的本地内核仓库：
-KERN_SRC=/absolute/path/to/linux ./build.sh kernel
+# 也可使用已有的本地内核检出：
+KERNEL_SRC=/absolute/path/to/linux-xanmod-gaokun3 ./build.sh kernel
 ```
 
-已有源码目录必须与 `KERNEL_COMMIT` 完全一致且干净：脚本不会把该目录 reset 到别的提交，但它会在其上应用仓库补丁序列。`WORKDIR` 可更改输出目录。`scripts/local/build_kernel.sh` 是保留的设备端交互式构建安装入口，它自行克隆 mainline 并按 `KERNEL_TAG` 检出，不使用 `build.env` 固定的提交；可复现构建应改用 `build.sh`。
+未设置 `KERNEL_SRC` 时，若 `~/git/linux-xanmod-gaokun3` 存在则直接复用，否则按 `KERNEL_TAG` 获取。检出含本地改动时脚本报错退出。`WORKDIR` 可更改输出目录。
 
 ## 迁移审查
 
@@ -54,14 +51,14 @@ KERN_SRC=/absolute/path/to/linux ./build.sh kernel
 - 根据原重启规划纠正视频路线：next 去除旧 Venus 系列，移植上游 Iris DTS 并启用 stable Iris 驱动；解码及编码均未实测。补入 right-0903 force-GSI 实现，已吸收 vahiru 的 SPI 重试和预测位置跳点修复，整体算法替换仍待审查。详见 [内核审计](kernel-audit.md)。
 - `CONFIG_INPUT_UINPUT=m` 已在配置中；PR #2 的用户空间部分未在本轮引入。
 - `9420138` 删除的旧 UCSI、q6apm 改动与新基线冲突，尚待语义审查；不能宣称已上游或功能等价。
-- EL2 仅有部分移植工作：remoteproc 异步 attach 与 q6v5 running 状态变更需要继续审查，不能发布。EL2 以补丁形式叠加（`patches/el2`，XanMod 下另加 `patches/xanmod/el2` 的 `0009`、`0010`、`0016`），不再依赖单独的 EL2 提交；产物是否可用仍需实机验证。
+- EL2 仅有部分移植工作：remoteproc 异步 attach 与 q6v5 running 状态变更需要继续审查，不能发布。EL2 序列已落成 `gaokun3-el2` 分支的提交，产物是否可用仍需实机验证。
 - systemd-boot 使用 `fedora` / `ubuntu` entry token（Debian 用 machine-id）。旧 machine-id 条目保留作回退；详见 [启动布局](boot-layout.md)。
 
 ## 已验证与发布门槛
 
 已验证：固定内核的 defconfig 生成、内核 Kbuild 设备树编译，以及 EC、电池驱动对象交叉编译；当前 Iris 全目录对象与 SPI GENI 对象交叉编译通过；Himax 对象 W=1 构建无警告，SPI 故障注入与追踪回归测试通过；systemd 255 的实际 kernel-install / BLS 插件测试通过（`tests/test_boot_entries.py`）。
 
-内核提交 `73033564068250603f5b2150c408554faaf22d66`（`build.env` 当前固定值）是本次迁移的检出依据。此前记录的候选提交 `1ab894b42deae74cc72cc89f2cb436534260faed` 及其 CI 运行记录（见下）属于迁移前的候选，不再对应当前 `build.env`。
+当前检出是 `build.env` 指定的 `gaokun3` 与 `gaokun3-el2` 分支。此前记录的 `73033564068250603f5b2150c408554faaf22d66`（旧下游树 `gaokun3/linux`）与候选提交 `1ab894b42deae74cc72cc89f2cb436534260faed` 及其 CI 运行记录（见下）都属于迁移前，不再对应当前 `build.env`。
 
 历史记录（迁移前候选 `1ab894b42`）：已通过完整内核及 DEB/RPM CI，并通过 Fedora 44 镜像构建；两个工作流均未发布 release。
 
@@ -84,23 +81,23 @@ gh workflow run fedora-gaokun3-release.yml --repo 186526/linux-gaokun-buildbot \
   -f package_run_id=PACKAGE_CI_RUN_ID -f publish_release=false
 ```
 
-Fedora 与 Ubuntu 镜像工作流的 `Load reviewed build inputs` 步骤原在 `KERNEL_EL2_COMMIT` 为空时拒绝 `build_el2=true`；该判定已随补丁式 EL2 移除，两个工作流现在可以请求 EL2（Debian 工作流此前没有该判定）。镜像工作流只核对 manifest 的 `kernel_tag`、`build_el2`、`build_kernelsu`；`kernel_commit` 与 `build.env` 的核对仅在 `kernel_base=mainline` 时执行，因为 XanMod 构建记录的是从 `KERNEL_XANMOD_TAG` 解析出的提交。
+EL2 现在由独立的 `gaokun3-el2` 分支提供，`KERNEL_EL2_COMMIT` 只在需要固定提交时填写。镜像工作流核对 manifest 的 `kernel_tag`、`build_el2`、`build_kernelsu`；`kernel_commit` 与 `build.env` 的核对在 `KERNEL_COMMIT` 非空时执行，留空时跟随分支尖端。
 
 Debian Trixie 镜像配合 XanMod、EL2 与 KernelSU 时，先发布对应的软件包 release，再构建镜像（镜像按 release 前缀查找软件包）：
 
 ```bash
-# 1) 发布 XanMod + EL2 + KernelSU 的 DEB 包
+# 1) 发布 gaokun3 + EL2 + KernelSU 的 DEB 包
 gh workflow run gaokun3-package-debs.yml --repo 186526/linux-gaokun-buildbot \
-  -f kernel_tag=7.2.9-xanmod1 -f kernel_base=xanmod \
+  -f kernel_ref=gaokun3 \
   -f build_el2=true -f build_kernelsu=true -f publish_release=true
 
 # 2) 用同参数构建 Debian Trixie 镜像（rebuild_package_debs=false 走 release 查找）
 gh workflow run debian-gaokun3-release.yml --repo 186526/linux-gaokun-buildbot \
-  -f debian_release=trixie -f kernel_tag=7.2.9-xanmod1 -f kernel_base=xanmod \
+  -f debian_release=trixie -f kernel_ref=gaokun3 \
   -f build_el2=true -f build_kernelsu=true -f rebuild_package_debs=false
 ```
 
-`kernel_tag` 必须与软件包 release 中 manifest 的标签一致；镜像任务按 `gaokun3-debs-<kernel_tag>-xanmod-<profile>-<时间戳>`（profile 为 `std`，依次追加 `-el2`、`-ksu`）前缀查找，找不到即报错退出。`build_el2`、`build_kernelsu` 必须与发布时一致，否则 manifest 校验失败。注意 Debian/Ubuntu 镜像工作流的 `rebuild_package_debs=true` 路径会去 release API 下载重建的 DEB，而经 `workflow_call` 调用的打包任务默认不发布（`publish_release` 默认 `false`），因此该路径当前不可用；Fedora 工作流另有 `package_run_id` / download-artifact 步骤，不受此限。
+`kernel_ref` 必须与软件包 release 中 manifest 的 `kernel_tag` 一致；镜像任务按 `gaokun3-debs-<kernel_tag>-<profile>-<时间戳>`（profile 为 `std`，依次追加 `-el2`、`-ksu`）前缀查找，找不到即报错退出。`build_el2`、`build_kernelsu` 必须与发布时一致，否则 manifest 校验失败。注意 Debian/Ubuntu 镜像工作流的 `rebuild_package_debs=true` 路径会去 release API 下载重建的 DEB，而经 `workflow_call` 调用的打包任务默认不发布（`publish_release` 默认 `false`），因此该路径当前不可用；Fedora 工作流另有 `package_run_id` / download-artifact 步骤，不受此限。
 
 构建成功不代表设备启动和升级测试通过。
 

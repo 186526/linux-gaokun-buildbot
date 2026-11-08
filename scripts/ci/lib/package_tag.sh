@@ -7,7 +7,7 @@
 # a different combination (README "The package release tag encodes the
 # combination"). The tag shape is:
 #
-#   gaokun3-<kind>-<kernel-tag>[-xanmod]-<profile>[-clang[-lto-none]]-<timestamp>
+#   gaokun3-<kind>-<kernel-tag>-<profile>[-clang[-lto-none]]-<timestamp>
 #
 # where <profile> is std with -el2 and -ksu appended. The LTO mode is encoded
 # only when a Clang build turns LTO off (`-lto-none`); GCC stays LTO-free and the
@@ -43,7 +43,7 @@ package_lto_suffix() {
 }
 
 # Render the package release tag. Callers supply the parts they already resolve
-# (KERNEL_TAG, KERNEL_BASE, BUILD_EL2, BUILD_KERNELSU, PACKAGE_KIND); the
+# (KERNEL_TAG, BUILD_EL2, BUILD_KERNELSU, PACKAGE_KIND); the
 # timestamp is appended here so a rerun never overwrites an existing release.
 render_package_release_tag() {
   local kind="${1:-${PACKAGE_KIND:?missing PACKAGE_KIND (debs or rpms)}}"
@@ -53,11 +53,6 @@ render_package_release_tag() {
 
   local safe_kernel_tag="${kernel_tag//\//-}"
   safe_kernel_tag="${safe_kernel_tag//[^A-Za-z0-9._-]/-}"
-
-  local base_suffix=""
-  if [[ "${KERNEL_BASE:-xanmod}" == "xanmod" ]]; then
-    base_suffix="-xanmod"
-  fi
 
   local profile="std"
   if [[ "${BUILD_EL2:-false}" == "true" ]]; then
@@ -73,8 +68,8 @@ render_package_release_tag() {
   fi
   toolchain_suffix="${toolchain_suffix}$(package_lto_suffix "$KERNEL_TOOLCHAIN" "$KERNEL_LTO")"
 
-  printf 'gaokun3-%s-%s%s-%s%s-%s\n' \
-    "$kind" "$safe_kernel_tag" "$base_suffix" "$profile" "$toolchain_suffix" \
+  printf 'gaokun3-%s-%s-%s%s-%s\n' \
+    "$kind" "$safe_kernel_tag" "$profile" "$toolchain_suffix" \
     "$(date -u +%Y%m%d%H%M%S)"
 }
 

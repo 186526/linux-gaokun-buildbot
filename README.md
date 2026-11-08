@@ -2,7 +2,7 @@ English | [中文](docs/README_zh.md)
 
 # linux-gaokun-buildbot
 
-Build scripts, tools, and firmware for Linux images targeting the Huawei MateBook E Go 2023 (codename `gaokun3`) based on Qualcomm Snapdragon 8cx Gen3 (`SC8280XP`). The kernel sources, drivers, device trees, and `gaokun3_defconfig` are maintained in the separate downstream kernel repository [`gaokun3/linux`](https://github.com/gaokun3/linux).
+Build scripts, tools, and firmware for Linux images targeting the Huawei MateBook E Go 2023 (codename `gaokun3`) based on Qualcomm Snapdragon 8cx Gen3 (`SC8280XP`). The kernel is the XanMod fork [`186526/linux-xanmod-gaokun3`](https://gitlab.com/186526/linux-xanmod-gaokun3), which carries the device drivers, device trees, `gaokun3_defconfig`, and the EL2 series as ordinary commits. This repository fetches that tree, builds it, and packages the result; it no longer carries or replays device patches.
 
 The image pipeline now uses `systemd-boot` by default and can build a second EL2 kernel variant with `CONFIG_LOCALVERSION="-gaokun3-el2"`. The CI workflows default to that EL2 variant and to the pinned KernelSU integration; `./build.sh` keeps both opt-in through `BUILD_EL2` and `BUILD_KERNELSU`.
 
@@ -11,51 +11,53 @@ The image pipeline now uses `systemd-boot` by default and can build a second EL2
 New CI dispatches and reusable `workflow_call` runs default to the reviewed default profile:
 
 ```text
-kernel_base=xanmod  kernel_tag=7.2.9-xanmod1
+kernel_ref=gaokun3
 build_el2=true     build_kernelsu=true
 kernel_toolchain=clang   kernel_tune=sc8280xp
 ```
 
-`kernel_toolchain=clang` selects Clang/LLVM with ThinLTO (`LLVM=1 LLVM_IAS=1 LD=ld.lld`, `CONFIG_LTO_CLANG_THIN`); `kernel_tune=sc8280xp` appends `KCFLAGS=-march=armv8.4-a+crypto -mtune=cortex-x1c`, and `build_el2=true`/`build_kernelsu=true` include the `-gaokun3-el2` package set and the pinned KernelSU revision in both variants. Every one of these remains an input: set `kernel_base=mainline`, `build_el2=false`, `build_kernelsu=false`, `kernel_toolchain=gcc`, or an empty `kernel_tune` to fall back to the previous portable/standard behaviour. `kernel_tune` is not honoured by `build.sh` or the legacy helper; pass `KERNEL_TUNE` in the environment there.
+`kernel_toolchain=clang` selects Clang/LLVM with ThinLTO (`LLVM=1 LLVM_IAS=1 LD=ld.lld`, `CONFIG_LTO_CLANG_THIN`); `kernel_tune=sc8280xp` appends `KCFLAGS=-march=armv8.4-a+crypto -mtune=cortex-x1c`, and `build_el2=true`/`build_kernelsu=true` include the `-gaokun3-el2` package set and the pinned KernelSU revision in both variants. Every one of these remains an input: set `build_el2=false`, `build_kernelsu=false`, `kernel_toolchain=gcc`, or an empty `kernel_tune` to fall back to the portable/standard behaviour. `kernel_ref` selects the branch or tag of the kernel fork; the EL2 variant is always fetched from `KERNEL_EL2_REF` (`gaokun3-el2`). `kernel_tune` is not honoured by the workflow inputs of `build.sh`; pass `KERNEL_TUNE` in the environment there.
 
-The package release tag encodes the combination, so an image workflow only finds a package set built the same way: `gaokun3-debs-7.2.9-xanmod1-xanmod-std-el2-ksu-clang-<ts>` (and the `gaokun3-rpms-...` equivalent). A Clang or EL2/KernelSU suffix the image run does not expect causes the prefix lookup to miss, and a manifest whose `kernel_tag`/`build_el2`/`build_kernelsu` disagrees with the request is rejected.
+The package release tag encodes the combination, so an image workflow only finds a package set built the same way: `gaokun3-debs-gaokun3-std-el2-ksu-clang-<ts>` (and the `gaokun3-rpms-...` equivalent). A Clang or EL2/KernelSU suffix the image run does not expect causes the prefix lookup to miss, and a manifest whose `kernel_tag`/`build_el2`/`build_kernelsu` disagrees with the request is rejected.
 
-### Pinned kernel input
+### Kernel input
 
-`build.env` pins the exact kernel input, and `./build.sh kernel|debs|rpms` is the local entry point that consumes it:
+`build.env` names the kernel source, and `./build.sh kernel|debs|rpms` is the local entry point that consumes it:
 
 ```bash
-KERNEL_REPOSITORY=gaokun3/linux
+KERNEL_REPOSITORY=186526/linux-xanmod-gaokun3
 KERNEL_TAG=gaokun3
-KERNEL_COMMIT=73033564068250603f5b2150c408554faaf22d66
+KERNEL_EL2_REF=gaokun3-el2
+KERNEL_COMMIT=
 KERNEL_EL2_COMMIT=
 FEDORA_RELEASE=44
 UBUNTU_RELEASE=26.04
 ```
 
-The CI defaults above do not change this file: `build.env` still pins the **mainline** checkout, and it deliberately leaves `KERNEL_BASE` unset so a local `./build.sh` run keeps using the pinned commit. Only the workflows default to XanMod. A local XanMod build therefore has to select the base and the matching naming label explicitly; otherwise `build.env`'s `KERNEL_TAG=gaokun3` would label a XanMod artifact with a tag that does not describe its source:
+`KERNEL_TAG` is both the ref fetched from `KERNEL_REPOSITORY` and the naming label the packages carry. `KERNEL_COMMIT` and `KERNEL_EL2_COMMIT` are optional exact pins: leave them empty to follow the branch tips, or set them to make a release reproducible, in which case `fetch_kernel_tree` refuses a ref that resolves to another commit.
+
+`scripts/ci/lib/kernel_tree.sh` fetches the ref with `--depth=1` into a detached checkout and refuses to reuse a directory that has local edits. It then reads `gaokun3-manifest.json` from the tree root, which names the release strings, defconfig, and DTBs the packaging stage expects, so no script here hardcodes device file names.
+
+A local run reuses an existing checkout when `KERNEL_SRC` is set, or `~/git/linux-xanmod-gaokun3` when it exists, instead of fetching:
 
 ```bash
-KERNEL_BASE=xanmod KERNEL_TAG=7.2.9-xanmod1 KERNEL_TOOLCHAIN=clang KERNEL_TUNE=sc8280xp BUILD_EL2=true BUILD_KERNELSU=true ./build.sh debs
+KERNEL_TOOLCHAIN=clang KERNEL_TUNE=sc8280xp BUILD_EL2=true BUILD_KERNELSU=true ./build.sh debs
 ```
 
-`scripts/lib/kernel_source.sh` clones exactly that commit (`git fetch --depth=1`, detached HEAD) and refuses to continue when the checkout is at another commit or contains local edits or untracked files. `KERNEL_TAG` is only a naming label; the commit is what is checked out. The pinned Gaokun3 tree already contains device drivers, DTS files, and `gaokun3_defconfig`, so the build does not replay the legacy device patch series on it. `KERNEL_BASE=xanmod` selects the separate XanMod tree at `KERNEL_XANMOD_TAG` (default `7.2.9-xanmod1`) and applies the repository patch series with XanMod overrides. EL2 is patch-based; `KERNEL_EL2_COMMIT` remains empty and is not required for `BUILD_EL2=true`.
+With `BUILD_EL2=true`, the EL2 variant is fetched from `KERNEL_EL2_REF` into its own checkout (`KERN_SRC_EL2`, default `$WORKDIR/linux-el2`) and built separately, so the standard variant is never patched in place.
 
 ## What is included
 
 ### Repository layout
 
-- `build.sh`: local build entry point (`./build.sh kernel|debs|rpms`); sources `build.env` and prepares the pinned kernel checkout
-- `build.env`: reviewed, pinned build inputs (kernel repository, tag, commit, EL2 commit, distro releases)
-- `patches/`: device patches applied to XanMod, EL2 patches, and the pinned KernelSU revision
-- `defconfig/`, `dts/`: review mirrors of the device files maintained in the pinned `gaokun3/linux` tree
+- `build.sh`: local build entry point (`./build.sh kernel|debs|rpms`); sources `build.env` and prepares the kernel checkout
+- `build.env`: reviewed build inputs (kernel repository, ref, optional commit pins, distro releases)
 - `docs/`: bilingual usage/build guides and platform notes
 - `firmware/`: minimal firmware bundle used by the image build
-- `packaging/`: distro kernel and firmware package templates and metadata
-- `scripts/ci/`: workflow build, image creation, and packaging scripts
-- `scripts/lib/`: pinned-source preparation and guards
-- `scripts/local/`: legacy interactive on-device build helper
-- `tests/`: Python unit tests for the source guards and for `kernel-install` entry-token/BLS behavior
+- `packaging/`: distro kernel and firmware package templates, metadata, and the pinned KernelSU revision
+- `scripts/ci/`: kernel build, image creation, and packaging scripts
+- `scripts/ci/lib/`: kernel fetch and manifest reader, toolchain selection, KernelSU integration, package manifest reader, release-tag rendering
+- `tests/`: Python unit tests for `kernel-install` entry-token/BLS behavior
 - `tools/`: device-specific helper scripts, service files, image assets, and EL2 EFI payloads
 
 ### Package outputs
@@ -74,19 +76,15 @@ The package pipeline builds and installs dedicated package sets:
 - Fedora, Debian, and Ubuntu image releases contain compressed installable images.
 - Gaokun RPM and DEB releases contain the standalone kernel and firmware package sets used by the image workflows.
 
-### Kernel patches
+### Kernel content
 
-The pinned Gaokun3 kernel contains its device drivers, DTS, and defconfig. The build applies the legacy device patch series only to XanMod; the pinned Gaokun3 build does not replay those patches. For XanMod, the series are applied in filename order:
+The device work is committed in the kernel fork, not replayed here:
 
-- `patches/upstream/*`: Gaokun3 UCSI, EC, ADSP, and HI846 support adapted to the XanMod source.
-- `patches/others/*`: display clock, SPI GSI, fbdev, DSC interface width, and panel orientation fixes.
-- `patches/media/*`: SC8280XP Venus resources, adapted from the [jhovold/linux](https://github.com/jhovold/linux/commits/wip/sc8280xp-6.16) Venus series.
-- `patches/0099-arm64-gaokun3-import-local-dts-and-defconfig.patch`: imports the device DTS and `gaokun3_defconfig` for XanMod.
-- `patches/el2/*`: remoteproc restart of detached remoteprocs and Qualcomm SCM shared-memory bridge changes, with XanMod-specific EL2 overrides.
-- `patches/xanmod/*`: base-specific replacements and additions, including the bonded DSI PLL fix, touchscreen PDC mapping fix, and Venus DTS adaptation. A patch is skipped only when reverse-apply validation or a patch-specific set of target-file anchors confirms that its change is already present.
+- `gaokun3` branch: the device series (UCSI, EC, ADSP, HI846, display clock, SPI GSI, fbdev, DSC timing, panel orientation, MHI firmware retention), the device tree and its camera dtsi, and `gaokun3_defconfig`.
+- `gaokun3-el2` branch: `gaokun3` plus the EL2 series (SMP2P, remoteproc restart of detached remoteprocs, Qualcomm SCM shared-memory bridge), the non-restartable-remoteproc guard, and `CONFIG_LOCALVERSION="-gaokun3-el2"`. The EL2 DTB is the upstream `sc8280xp-el2.dtbo` overlay applied to the device tree.
+- `gaokun3-manifest.json` at the tree root: release strings, defconfig, and DTB names the packaging stage reads.
 
-With `BUILD_EL2=true`, the EL2 series is applied to a separate source snapshot so standard packages use the unmodified standard tree.
-- **[Optional]** `patches/kernelsu/PINNED_REVISION.md`: records the pinned upstream KernelSU revision. KernelSU is not vendored; when `BUILD_KERNELSU=true` the build clones `https://github.com/tiann/KernelSU.git` at `v3.3.0` (`932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e`) and wires it into the kernel tree before configuration, so both the standard and EL2 variants include KernelSU.
+- **[Optional]** `packaging/kernelsu/PINNED_REVISION.md`: records the pinned upstream KernelSU revision. KernelSU is not vendored; when `BUILD_KERNELSU=true` the build clones `https://github.com/tiann/KernelSU.git` at `v3.3.0` (`932014ab5b2c9b74a3d11e2ec4d17dd10fc9442e`) and wires it into the kernel tree before configuration, so both the standard and EL2 variants include KernelSU. `packaging/kernelsu/*.patch` carries the source transformations applied to that checkout.
 
 ### Tool Sources
 
@@ -109,38 +107,21 @@ The image and local-install workflows now follow the standard `kernel-install` +
 
 ## Local builds with KernelSU
 
-For a reproducible, pinned build use `./build.sh` (see [Pinned kernel input](#pinned-kernel-input)); it also honors `BUILD_KERNELSU=true` and `BUILD_EL2=true`.
+For a reproducible, pinned build use `./build.sh` (see [Kernel input](#kernel-input)); it also honors `BUILD_KERNELSU=true` and `BUILD_EL2=true`.
 
-The legacy on-device helper `scripts/local/build_kernel.sh` clones mainline and applies the patch series itself. It can integrate KernelSU. It is interactive by default, but every prompt has a non-interactive override, so it can also run unattended:
-
-```bash
-export KERNEL_TAG=7.2.9-xanmod1   # real XanMod tag
-export KERNEL_BASE=xanmod
-export BUILD_KERNELSU=true       # clone and wire pinned KernelSU
-export BUILD_EL2=true            # build the standard kernel and the EL2 kernel
-export INSTALL_KERNEL=false      # build only, do not install
-scripts/local/build_kernel.sh < /dev/null
-```
-
-With stdin closed and the overrides above set, the run is fully non-interactive: the remaining prompts (toolchain install, kernel pull, mirror) fall back to their documented defaults instead of aborting.
-
-Overrides and defaults:
+`./build.sh` integrates KernelSU when `BUILD_KERNELSU=true`. The relevant overrides:
 
 | Variable | Purpose | Default when unset |
 | -------- | ------- | ------------------ |
-| `BUILD_KERNELSU` | Wire the pinned KernelSU into the kernel | prompt, defaults to yes |
-| `EL2_CHOICE` | `y` (EL2 only), `n` (standard only), `both` | prompt, defaults to `n` |
-| `BUILD_EL2` | Convenience alias for `EL2_CHOICE=both` | unset |
-| `INSTALL_DEPS` | Install the minimal build toolchain | prompt, defaults to no |
-| `PULL_KERNEL` | Pull the kernel and apply patches when the tree is missing | prompt, defaults to no |
-| `USE_MIRROR` | Use the Chinese kernel mirror (mainline base only) | prompt, defaults to yes |
-| `INSTALL_KERNEL` | Install each built kernel after it compiles | prompt per kernel, defaults to yes |
+| `BUILD_KERNELSU` | Wire the pinned KernelSU into both variants | `false` |
+| `BUILD_EL2` | Also build the EL2 variant from `KERNEL_EL2_REF` | `false` |
+| `KERNEL_SRC` | Existing kernel checkout to build instead of fetching | `~/git/linux-xanmod-gaokun3` when present |
+| `KERNEL_TAG` / `KERNEL_EL2_REF` | Kernel fork refs to fetch | `build.env` |
 | `KERNSU_URL` / `KERNSU_REF` / `KERNSU_COMMIT` / `KERNSU_SRC` | KernelSU clone source, pinned ref and commit, clone directory | `tiann/KernelSU.git`, `v3.3.0`, the pinned commit, `$WORKDIR/kernelsu-src` |
 
 Notes:
 
-- `BUILD_EL2`/`EL2_CHOICE` preserve the original selection semantics: `EL2_CHOICE=y` builds only EL2, `n` only standard, `both` (or `BUILD_EL2=true`) both.
-- KernelSU is cloned at the pinned revision and wired into the source tree before `gaokun3_defconfig`, so both the standard (`$KERN_OUT`) and the EL2 (`$KERN_OUT_EL2`) variants include KernelSU; the EL2 variant keeps its `-gaokun3-el2` `CONFIG_LOCALVERSION` suffix and the DTB name is unchanged.
+- KernelSU is cloned at the pinned revision and wired into each variant's source tree before its defconfig, so the standard (`$KERN_OUT`) and EL2 (`$KERN_OUT_EL2`) variants both include it; the EL2 branch keeps its `-gaokun3-el2` `CONFIG_LOCALVERSION` suffix and the DTB name is unchanged.
 - A KernelSU build needs network access to `github.com` at build time (the clone). No extra packages are required. The helper enables `CONFIG_KPROBES`, `CONFIG_FTRACE`, and `CONFIG_KSU` and verifies `CONFIG_KSU=y`/`CONFIG_KPROBES=y`/`CONFIG_TRACEPOINTS=y` in each variant's `.config`.
 - If the clone or checkout fails, the helper fails with an explicit message instead of silently building a kernel without KernelSU. Set `BUILD_KERNELSU=false` to opt out.
 
@@ -160,7 +141,7 @@ For an overview of hardware support status on the device, see [right-0903/linux-
 
 ## References
 
-- [gaokun3/linux](https://github.com/gaokun3/linux) : The downstream kernel tree pinned by `build.env`; it carries the device enablement, DTS, drivers, and `gaokun3_defconfig` that this repository previously applied as patches.
+- [186526/linux-xanmod-gaokun3](https://gitlab.com/186526/linux-xanmod-gaokun3) : The XanMod fork named by `build.env`; it carries the device enablement, DTS, drivers, `gaokun3_defconfig`, and the EL2 branch that this repository builds and packages.
 - [right-0903/linux-gaokun](https://github.com/right-0903/linux-gaokun) : The main source of the kernel patches and device support work, with detailed commit messages and explanations.
 - [TheUnknownThing/linux-gaokun](https://github.com/TheUnknownThing/linux-gaokun) : Another fork of the kernel patches and device support work, with some unique commits and explanations for Touchscreen and EC.
 - [whitelewi1-ctrl/matebook-e-go-linux](https://github.com/whitelewi1-ctrl/matebook-e-go-linux) : The earliest repo to fix panel backlight problem, with some additional resources and modifications for Gaokun3 Linux support.

@@ -17,7 +17,7 @@ jobs:
           bash -n build.sh build.env
           find scripts -name '*.sh' -print0 | xargs -0 -n1 bash -n
       - name: Check new build entry points
-        run: shellcheck -S warning build.sh scripts/lib/kernel_source.sh scripts/ci/20_build_kernel_variants.sh scripts/ci/lib/toolchain.sh scripts/ci/lib/package_tag.sh scripts/local/build_kernel.sh
+        run: shellcheck -S warning build.sh scripts/ci/20_build_kernel.sh scripts/ci/lib/kernel_tree.sh scripts/ci/lib/package_manifest.sh scripts/ci/lib/toolchain.sh scripts/ci/lib/package_tag.sh scripts/ci/lib/kernelsu.sh
       - name: Validate the kernel toolchain selection
         run: |
           set -euo pipefail
@@ -102,7 +102,7 @@ jobs:
           suffix_case clang none "-lto-none"
           suffix_case gcc "" ""
           prefix_for() {
-            KERNEL_TOOLCHAIN="$1" KERNEL_LTO="$2" KERNEL_TAG=v7.2 KERNEL_BASE=mainline \
+            KERNEL_TOOLCHAIN="$1" KERNEL_LTO="$2" KERNEL_TAG=gaokun3 \
               BUILD_EL2=false BUILD_KERNELSU=false bash -c '
                 . scripts/ci/lib/package_tag.sh
                 package_release_prefix debs
@@ -114,11 +114,11 @@ jobs:
             echo "Clang ThinLTO and Clang LTO-off share a release prefix: '$prefix_thin'" >&2
             exit 1
           }
-          [[ "$prefix_thin" == "gaokun3-debs-v7.2-std-clang-" ]] || {
+          [[ "$prefix_thin" == "gaokun3-debs-gaokun3-std-clang-" ]] || {
             echo "unexpected Clang ThinLTO prefix: '$prefix_thin'" >&2
             exit 1
           }
-          [[ "$prefix_none" == "gaokun3-debs-v7.2-std-clang-lto-none-" ]] || {
+          [[ "$prefix_none" == "gaokun3-debs-gaokun3-std-clang-lto-none-" ]] || {
             echo "unexpected Clang LTO-off prefix: '$prefix_none'" >&2
             exit 1
           }
@@ -127,9 +127,5 @@ jobs:
             exit 1
           fi
           echo "package release-tag LTO encoding OK"
-      - name: Check source protection and boot entries
+      - name: Check boot entries
         run: python3 -m unittest discover -s tests -v
-      - name: Check the DSC timing-width patch chain
-        run: scripts/ci/check_display_dsc_fix.sh --series
-      - name: Preflight the prepared device parity inventory
-        run: scripts/ci/check_device_parity.sh --series

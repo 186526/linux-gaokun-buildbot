@@ -13,11 +13,10 @@ set -euo pipefail
 : "${FEDORA_RELEASE:?missing FEDORA_RELEASE}"
 
 BUILD_EL2="${BUILD_EL2:-false}"
-KREL="$(cat "$WORKDIR/kernel-release.txt")"
-KREL_EL2=""
-if [[ "$BUILD_EL2" == "true" && -f "$WORKDIR/kernel-release-el2.txt" ]]; then
-  KREL_EL2="$(cat "$WORKDIR/kernel-release-el2.txt")"
-fi
+: "${PACKAGE_RPMS_DIR:?missing PACKAGE_RPMS_DIR}"
+# shellcheck source=lib/package_manifest.sh
+. "$(dirname "$0")/lib/package_manifest.sh"
+read_package_releases "$PACKAGE_RPMS_DIR"
 
 EFI_END_MIB=1025
 truncate -s "$IMAGE_SIZE" "$IMAGE_FILE"
