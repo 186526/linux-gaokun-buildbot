@@ -30,10 +30,17 @@ fetch_kernel_tree() {
     return 1
   fi
 
+  # The EL2 variant is a different branch, so it is checked against
+  # KERNEL_EL2_COMMIT; KERNEL_COMMIT only pins the ref KERNEL_TAG names.
+  local pin="${KERNEL_COMMIT:-}"
+  if [[ "$ref" == "${KERNEL_EL2_REF:-}" && "$ref" != "${KERNEL_TAG:-}" ]]; then
+    pin="${KERNEL_EL2_COMMIT:-}"
+  fi
+
   git -C "$destination" fetch --quiet --depth=1 origin "$ref" || return 1
   commit="$(git -C "$destination" rev-parse FETCH_HEAD)"
-  if [[ -n "${KERNEL_COMMIT:-}" && "$commit" != "$KERNEL_COMMIT" ]]; then
-    echo "kernel ref $ref resolves to $commit, but build.env pins $KERNEL_COMMIT" >&2
+  if [[ -n "$pin" && "$commit" != "$pin" ]]; then
+    echo "kernel ref $ref resolves to $commit, but the build pins $pin" >&2
     return 1
   fi
   git -C "$destination" checkout --quiet --detach "$commit"
